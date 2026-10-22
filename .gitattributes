@@ -1,0 +1,6 @@
+* text=auto
+*.pyp text diff=python
+*.py  text diff=python
+*.png binary
+*.tif binary
+*.c4d binary

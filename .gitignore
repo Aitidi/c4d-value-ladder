@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Cinema 4D
+*.c4d.bak
+*_backup_*.c4d
+illustrator/
+*.log
+
+# OS / editors
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
