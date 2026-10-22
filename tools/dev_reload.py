@@ -10,8 +10,9 @@ import os
 
 import c4d
 
+# Run it as a file, or set VALUELADDER_TOOLS to this folder when pasting it.
 PYP = os.path.join(os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else
-                   r"D:\AgentProject\Cinema 4D\ValueLadder\tools",
+                   os.environ["VALUELADDER_TOOLS"],
                    "..", "plugin", "ValueLadder", "ValueLadder.pyp")
 DEV_ID = 1000003
 
