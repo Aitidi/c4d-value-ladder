@@ -1,0 +1,7 @@
+STRINGTABLE valueladderprefs
+{
+	valueladderprefs "ValueLadder";
+
+	VALUELADDER_PREFS_GROUP "ValueLadder";
+	VALUELADDER_PREFS_ENABLE_AT_STARTUP "Enable at startup";
+}

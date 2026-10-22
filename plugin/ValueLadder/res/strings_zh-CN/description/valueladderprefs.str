@@ -1,0 +1,7 @@
+STRINGTABLE valueladderprefs
+{
+	valueladderprefs "ValueLadder";
+
+	VALUELADDER_PREFS_GROUP "ValueLadder";
+	VALUELADDER_PREFS_ENABLE_AT_STARTUP "\u542f\u52a8\u65f6\u542f\u7528";
+}

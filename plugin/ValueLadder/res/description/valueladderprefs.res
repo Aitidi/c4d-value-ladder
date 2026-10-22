@@ -1,0 +1,11 @@
+CONTAINER valueladderprefs
+{
+	NAME valueladderprefs;
+
+	GROUP VALUELADDER_PREFS_GROUP
+	{
+		DEFAULT 1;
+
+		BOOL VALUELADDER_PREFS_ENABLE_AT_STARTUP { }
+	}
+}
