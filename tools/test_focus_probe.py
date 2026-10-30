@@ -18,6 +18,7 @@ def _load_plugin():
     spec = importlib.util.spec_from_loader(loader.name, loader)
     plugin = importlib.util.module_from_spec(spec)
     loader.exec_module(plugin)
+    plugin.ENABLE_PROBE_FALLBACK = True   # the probe checks exercise the fallback
     return plugin
 
 
@@ -128,6 +129,8 @@ def main():
             self.assertEqual(self.value(1), 8)
             self.assertTrue(ctrl.param.is_int)
             self.assertEqual(ctrl.last_rung, plugin.INT_LAST_RUNG)
+            self.assertEqual(ctrl.rungs, plugin.RUNGS[:plugin.INT_LAST_RUNG + 1])   # fractions hidden
+            self.assertEqual(ctrl.rungs[-1], 1.0)
 
         def test_upper_bound_restores_then_clamps(self):
             ctrl = self.controller()
@@ -449,6 +452,330 @@ def main():
             mouse.assert_not_called()
             thread.assert_not_called()
             self.assertEqual(ctrl.phase, plugin.IDLE)
+
+        def test_label_descids_map_to_snapshot_keys(self):
+            vec = lambda pid, comp: c4d.DescID(c4d.DescLevel(pid, c4d.DTYPE_VECTOR, 0),
+                                               c4d.DescLevel(comp, c4d.DTYPE_REAL, 0))
+            self.assertEqual(plugin._label_target(vec(c4d.ID_BASEOBJECT_REL_ROTATION, c4d.VECTOR_Y)),
+                             (c4d.ID_BASEOBJECT_REL_ROTATION, 'v', 1))
+            self.assertEqual(plugin._label_target(c4d.DescID(c4d.DescLevel(c4d.PRIM_CUBE_SUBX, c4d.DTYPE_LONG, 0))),
+                             (c4d.PRIM_CUBE_SUBX, 'l', None))
+            # A shared vector label: the pressed field picks the component.
+            self.assertEqual(plugin._label_target(
+                c4d.DescID(c4d.DescLevel(c4d.ID_BASEOBJECT_REL_SCALE, c4d.DTYPE_VECTOR, 0))),
+                (c4d.ID_BASEOBJECT_REL_SCALE, 'v', None))
+            self.assertEqual(plugin._label_target(self.ids[0]), ((c4d.ID_USERDATA, 1), 'r', None))
+            self.assertIsNone(plugin._label_target(
+                c4d.DescID(c4d.DescLevel(c4d.ID_BASELIST_NAME, c4d.DTYPE_STRING, 0))))
+
+        def label_ladder(self, descid, nodes, travel=3):
+            ctrl = self.controller()
+            ctrl.phase = plugin.PREPARING
+            ctrl._open_overlay = lambda: setattr(ctrl, 'overlay_rect', (0, 0, 52, 416))
+            ctrl.out_dx = plugin.PX_PER_STEP * travel
+            ctrl.pt = (100, 0)   # beside the ladder: the 1.0 rung stays selected
+            with mock.patch.object(plugin, '_cursors_scrub'), \
+                    mock.patch.object(plugin, '_active_rungs', return_value=list(plugin.RUNGS)):
+                ok = ctrl._begin_label((descid, nodes))
+            return ctrl, ok
+
+        def test_label_document_setting_scrubs_directly(self):
+            fps = self.doc.GetFps()
+            descid = c4d.DescID(c4d.DescLevel(c4d.DOCUMENT_FPS, c4d.DTYPE_LONG, 0))
+            ctrl, ok = self.label_ladder(descid, [self.doc])
+            self.assertTrue(ok)
+            self.assertEqual(ctrl.phase, plugin.LADDER)
+            self.assertEqual(ctrl.targets, [self.doc])
+            self.assertFalse(ctrl.scrub_undo)          # no AddUndo for settings
+            self.assertEqual(self.doc.GetFps(), fps + 3)
+            with mock.patch.object(plugin, '_cursors_scrub'):
+                ctrl._cancel()
+            self.assertEqual(self.doc.GetFps(), fps)
+
+        def test_label_project_scale_uses_unit_adapter(self):
+            descid = c4d.DescID(c4d.DescLevel(c4d.DOCUMENT_DOCUNIT, c4d.CUSTOMDATATYPE_UNITSCALE, 0))
+            scale = self.doc[c4d.DOCUMENT_DOCUNIT].GetUnitScale()[0]
+            ctrl, ok = self.label_ladder(descid, [self.doc])
+            self.assertTrue(ok)
+            self.assertIsInstance(ctrl.targets[0], plugin._UnitScale)
+            self.assertAlmostEqual(self.doc[c4d.DOCUMENT_DOCUNIT].GetUnitScale()[0], scale + 3)
+            with mock.patch.object(plugin, '_cursors_scrub'):
+                ctrl._cancel()
+            self.assertAlmostEqual(self.doc[c4d.DOCUMENT_DOCUNIT].GetUnitScale()[0], scale)
+
+        def test_unresolved_label_without_fallback_sends_no_input(self):
+            ctrl = self.controller()
+            ctrl.focus_probe = ctrl.capturing = True
+            ctrl.label_tried = True
+            ctrl._input_ready = lambda: True
+            with mock.patch.object(plugin, 'ENABLE_PROBE_FALLBACK', False), \
+                    mock.patch.object(plugin, '_send_mouse') as mouse, \
+                    mock.patch.object(plugin, '_send_key') as key, \
+                    mock.patch.object(c4d.documents, 'GetActiveDocument', return_value=self.doc):
+                ctrl._begin()
+            mouse.assert_not_called()
+            key.assert_not_called()
+            self.assertEqual(ctrl.phase, plugin.IDLE)
+
+        def test_label_ladder_adds_one_undo(self):
+            ctrl = self.controller()
+            ctrl.phase = plugin.PREPARING
+            ctrl._open_overlay = lambda: setattr(ctrl, 'overlay_rect', (0, 0, 52, 416))
+            descid = c4d.DescID(c4d.DescLevel(c4d.ID_BASEOBJECT_REL_POSITION, c4d.DTYPE_VECTOR, 0),
+                                c4d.DescLevel(c4d.VECTOR_X, c4d.DTYPE_REAL, 0))
+            ctrl.out_dx = plugin.PX_PER_STEP * 3
+            ctrl.pt = (100, 0)   # beside the ladder: the 1.0 rung stays selected
+            with mock.patch.object(plugin, '_cursors_scrub'):
+                self.assertTrue(ctrl._begin_label((descid, [self.node])))
+                self.assertEqual(ctrl.phase, plugin.LADDER)
+                self.assertTrue(ctrl.scrub_undo)
+                self.assertEqual(self.node.GetRelPos().x, 3)
+                ctrl._finish()
+            self.doc.DoUndo(False)
+            self.assertEqual(self.doc.GetFirstObject().GetRelPos().x, 0)
+
+        def test_node_port_label_is_decoded(self):
+            port = 'com.redshift3d.redshift4c4d.nodes.core.openpbrmaterial.base_weight'
+            raw = port.encode('ascii')
+            raw += b'\0' * (-len(raw) % 4)
+            levels = [c4d.DescLevel(int.from_bytes(raw[i:i + 4], 'big', signed=True), c4d.DTYPE_SUBCONTAINER, 0)
+                      for i in range(0, len(raw), 4)]
+            descid = c4d.DescID()
+            for level in levels + [c4d.DescLevel(1, c4d.DTYPE_REAL, 0)]:
+                descid.PushId(level)
+            target = plugin._label_target(descid)
+            self.assertEqual(target, ('port', port, None))
+            key = 'material:graph:openpbrmaterial@abc<' + port
+            self.assertTrue(plugin._label_matches(target, (key, 'r', None)))
+            self.assertFalse(plugin._label_matches(target, (key + '_x', 'r', None)))
+            self.assertFalse(plugin._label_matches(target, (c4d.PRIM_CUBE_SUBX, 'l', None)))
+
+        def test_short_scene_node_port_id_is_decoded(self):
+            raw = b'pointin\0'
+            descid = c4d.DescID()
+            for i in (0, 4):
+                descid.PushId(c4d.DescLevel(int.from_bytes(raw[i:i + 4], 'big', signed=True),
+                                            c4d.DTYPE_SUBCONTAINER, 0))
+            descid.PushId(c4d.DescLevel(1, c4d.DTYPE_VECTOR, 0))
+            target = plugin._label_target(descid)
+            self.assertEqual(target, ('port', 'pointin', None))
+            self.assertTrue(plugin._label_matches(target, ('scene:x:addpoint@Hz<pointin', 'v', None)))
+            self.assertFalse(plugin._label_matches(target, ('scene:x:addpoint@Hz<xpointin', 'v', None)))
+
+        def test_shared_vector_label_names_pressed_field(self):
+            self.assertEqual([plugin._label_comp('v', None, f) for f in range(4)], [0, 1, 2, False])
+            self.assertEqual(plugin._label_comp('v', 1, 0), 1)       # P . Y
+            self.assertIs(plugin._label_comp('v', 1, 1), False)
+            self.assertIsNone(plugin._label_comp('r', None, 0))
+            self.assertIs(plugin._label_comp('r', None, 1), False)  # second field of a pair
+
+        def row_buffer(self, det):
+            w, h = det.WIDTH, det.HEIGHT
+            buf = (plugin.ctypes.c_ubyte * (w * h * 4))()
+
+            def put(x, y, rgb):
+                i = (y * w + x) * 4
+                buf[i], buf[i + 1], buf[i + 2] = rgb[2], rgb[1], rgb[0]
+            for y in range(h):
+                for x in range(w):
+                    put(x, y, (43, 43, 43))
+            return buf, put
+
+        def test_vector_row_fields_share_label(self):
+            det = plugin.FieldDetector()
+            det.edit_colors = [(28, 28, 28)]
+            buf, put = self.row_buffer(det)
+            top, bottom = 28, 43
+            for y in range(31, 41):                   # label text "Point"
+                for x in range(150, 185):
+                    if (x + y) % 3:
+                        put(x, y, (200, 200, 200))
+            lefts = (230, 312, 394)                   # X, Y, Z fields, 3 px apart
+            for left in lefts:
+                for y in range(top, bottom + 1):
+                    for x in range(left, left + 79):
+                        put(x, y, (28, 28, 28))
+                for y in range(33, 39):               # "0 cm"
+                    for x in range(left + 30, left + 50):
+                        if x % 2:
+                            put(x, y, (220, 220, 220))
+            for x in range(lefts[1] - 1, lefts[1] + 80):  # Y focused: blue border
+                put(x, top - 1, (90, 120, 230))
+                put(x, bottom + 1, (90, 120, 230))
+            for y in range(top - 1, bottom + 2):
+                put(lefts[1] - 1, y, (90, 120, 230))
+                put(lefts[1] + 79, y, (90, 120, 230))
+            for i, left in enumerate(lefts):
+                point = det._label(buf, left, top, bottom, 1.0)
+                self.assertIsNotNone(point, i)
+                self.assertTrue(150 <= point[0] < 185, point)
+                self.assertEqual(point[2], i)
+
+        def test_fields_scale_with_dpi(self):
+            det = plugin.FieldDetector()
+            det.edit_colors = [(28, 28, 28)]
+            w, h = det.WIDTH * 2, det.HEIGHT * 2
+            buf = (plugin.ctypes.c_ubyte * (w * h * 4))()
+            for i in range(w * h):
+                buf[i * 4:i * 4 + 3] = [43, 43, 43]
+            for y in range(h // 2 - 26, h // 2 + 27):     # a 53 px tall field at 200 %
+                for x in range(w // 2 - 60, w // 2 + 100):
+                    buf[(y * w + x) * 4:(y * w + x) * 4 + 3] = [28, 28, 28]
+            with mock.patch.object(plugin, '_grab_screen', return_value=buf):
+                self.assertEqual(det.check(1000, 500, 2.0)[0], 'field')
+                self.assertNotEqual(det.check(1000, 500, 1.0)[0], 'field')
+            ctrl = self.controller()
+            ctrl.dpi_scale = 2.0
+            self.assertEqual(ctrl._rung_px(), plugin.RUNG_PX * 2)
+
+        def test_node_editor_grid_is_not_a_field(self):
+            det = plugin.FieldDetector()
+            det.edit_colors = [(28, 28, 28)]
+            buf, put = self.row_buffer(det)
+            for y in range(det.HEIGHT):
+                for x in range(det.WIDTH):
+                    line = (x + 16) % 32 == 0 or (y + 16) % 32 == 0
+                    put(x, y, (36, 36, 36) if line else (28, 28, 28))
+            with mock.patch.object(plugin, '_grab_screen', return_value=buf):
+                self.assertEqual(det.check(1000 + 16, 500 + 4)[0], 'grid')
+
+        def test_label_skips_port_circle(self):
+            det = plugin.FieldDetector()
+            det.edit_colors = [(28, 28, 28)]
+            w, h = det.WIDTH, det.HEIGHT
+            buf = (plugin.ctypes.c_ubyte * (w * h * 4))()
+            def put(x, y, rgb):
+                i = (y * w + x) * 4
+                buf[i], buf[i + 1], buf[i + 2] = rgb[2], rgb[1], rgb[0]
+            for y in range(h):
+                for x in range(w):
+                    put(x, y, (43, 43, 43))
+            top, bottom, field_left = 26, 45, 300
+            for y in range(top, bottom + 1):          # the field
+                for x in range(field_left, field_left + 80):
+                    put(x, y, (28, 28, 28))
+            for y in range(30, 41):                   # label text "Weight"
+                for x in range(200, 240):
+                    if (x + y) % 3:
+                        put(x, y, (200, 200, 200))
+            ring = [(0, 2), (0, 3), (0, 4), (0, 5), (7, 2), (7, 3), (7, 4), (7, 5),
+                    (2, 0), (3, 0), (4, 0), (5, 0), (2, 7), (3, 7), (4, 7), (5, 7),
+                    (1, 1), (6, 1), (1, 6), (6, 6)]
+            for dx, dy in ring:                       # port circle 8 x 8
+                put(278 + dx, 32 + dy, (200, 200, 200))
+            point = det._label(buf, field_left, top, bottom, 1.0)
+            self.assertIsNotNone(point)
+            self.assertTrue(200 <= point[0] < 240, point)
+            for dx in range(8):                       # a connected port: filled
+                for dy in range(1, 7):
+                    put(278 + dx, 32 + dy, (200, 200, 200))
+            point = det._label(buf, field_left, top, bottom, 1.0)
+            self.assertTrue(point is None or 200 <= point[0] < 240, point)
+
+        def test_startup_preference_leaves_session_state(self):
+            bc = c4d.BaseContainer()
+            ctrl = plugin.Controller(lambda: None)
+            descid = c4d.DescID(c4d.DescLevel(plugin.PREFS_ENABLE_AT_STARTUP, c4d.DTYPE_BOOL, 0))
+            prefs = plugin.ValueLadderPrefs()
+            with mock.patch.object(plugin, '_prefs', return_value=bc), \
+                    mock.patch.object(plugin, '_controller', ctrl):
+                for session in (True, False):
+                    ctrl.enabled = session
+                    for startup in (False, True):
+                        prefs.SetDParameter(None, descid, startup, c4d.DESCFLAGS_SET_NONE)
+                        self.assertEqual(plugin._enable_at_startup(), startup)
+                        self.assertEqual(ctrl.enabled, session)
+                ctrl.enabled = True
+                plugin.ValueLadderToggle().Execute(self.doc)
+                self.assertFalse(ctrl.enabled)
+                self.assertTrue(plugin._enable_at_startup())
+
+        def test_preferences_migrate_from_test_id(self):
+            world = c4d.BaseContainer()
+            legacy = c4d.BaseContainer()
+            legacy.SetBool(plugin.PREFS_ENABLE_AT_STARTUP, False)
+            legacy.SetBool(plugin.PREFS_RUNG_BASE, True)          # 10000 on
+            legacy.SetString(4242, 'unrelated')
+            world.SetContainer(plugin.LEGACY_PREFS_KEY, legacy)
+            with mock.patch.object(c4d, 'GetWorldContainerInstance', return_value=world):
+                self.assertFalse(plugin._enable_at_startup())
+                self.assertEqual(plugin._active_rungs()[0], 10000.0)
+                migrated = world.GetContainer(plugin.PLUGIN_ID)
+                self.assertEqual(migrated.GetString(4242), '')      # only ValueLadder's keys
+                # Once migrated, later changes to the old key are ignored.
+                legacy.SetBool(plugin.PREFS_ENABLE_AT_STARTUP, True)
+                world.SetContainer(plugin.LEGACY_PREFS_KEY, legacy)
+                self.assertFalse(plugin._enable_at_startup())
+            fresh = c4d.BaseContainer()
+            with mock.patch.object(c4d, 'GetWorldContainerInstance', return_value=fresh):
+                self.assertTrue(plugin._enable_at_startup())      # defaults without old settings
+                self.assertEqual(plugin._active_rungs(), plugin.RUNGS)
+
+        def test_session_switch_on_preferences_page(self):
+            bc = c4d.BaseContainer()
+            ctrl = plugin.Controller(lambda: None)
+            ctrl._receiver_ready = mock.Mock(return_value=True)
+            now = c4d.DescID(c4d.DescLevel(plugin.PREFS_ENABLED_NOW, c4d.DTYPE_BOOL, 0))
+            prefs = plugin.ValueLadderPrefs()
+            with mock.patch.object(plugin, '_prefs', return_value=bc), \
+                    mock.patch.object(plugin, '_controller', ctrl):
+                bc.SetBool(plugin.PREFS_ENABLE_AT_STARTUP, False)
+                ctrl.enabled = False
+                prefs.SetDParameter(None, now, True, c4d.DESCFLAGS_SET_NONE)
+                self.assertTrue(ctrl.enabled)
+                ctrl._receiver_ready.assert_called_once()
+                self.assertTrue(prefs.GetDParameter(None, now, c4d.DESCFLAGS_GET_NONE)[1])
+                self.assertFalse(plugin._enable_at_startup())    # startup untouched
+                self.assertFalse(bc.GetBool(plugin.PREFS_ENABLED_NOW))  # never stored
+                plugin.ValueLadderToggle().Execute(self.doc)     # the menu flips the same state
+                self.assertFalse(prefs.GetDParameter(None, now, c4d.DESCFLAGS_GET_NONE)[1])
+
+        def test_rung_helpers(self):
+            self.assertEqual(plugin._home_rung(plugin.RUNGS), plugin.RUNGS.index(1.0))
+            self.assertEqual(plugin._home_rung([100.0, 10.0, 0.1]), 1)
+            self.assertEqual(plugin._int_last_rung([10000.0, 10.0, 1.0, 0.01]), 2)
+            self.assertEqual(plugin._int_last_rung([0.1, 0.01]), 0)
+            self.assertEqual([plugin._rung_pref(plugin.PREFS_RUNG_BASE + i)
+                              for i in range(len(plugin.ALL_RUNGS))], plugin.ALL_RUNGS)
+            self.assertIsNone(plugin._rung_pref(plugin.PREFS_ENABLE_AT_STARTUP))
+
+        def test_chosen_rungs_drive_ladder_and_integers(self):
+            bc = c4d.BaseContainer()
+            for rung in plugin.ALL_RUNGS:
+                bc.SetBool(plugin.PREFS_RUNG_BASE + plugin.ALL_RUNGS.index(rung), rung in (100.0, 0.5, 0.1))
+            with mock.patch.object(plugin, '_prefs', return_value=bc):
+                self.assertEqual(plugin._active_rungs(), [100.0, 0.1])
+                ctrl = self.controller()
+                ctrl._reset_rungs()
+            self.assertEqual((ctrl.rungs, ctrl.rung, ctrl.last_rung), ([100.0, 0.1], 1, 1))
+            # Integer parameter on the 0.1 rung: falls back to the 100 rung.
+            self.native_change([(1, 8)])
+            ctrl.focus_attempt = 4   # the whole +1 probe
+            self.identify(ctrl)
+            self.assertEqual(ctrl.phase, plugin.LADDER)
+            self.assertEqual((ctrl.rungs, ctrl.rung, ctrl.last_rung), ([100.0], 0, 0))
+            ctrl._cancel()
+
+        def test_integer_ladder_shrinks_open_overlay(self):
+            ctrl = self.controller()
+            ctrl.overlay_rect = (10, 20, plugin.OVERLAY_W, plugin.RUNG_PX * (len(ctrl.rungs) + 1))
+            ctrl.overlay = mock.Mock()
+            self.native_change([(1, 8)])
+            ctrl.out_dx = plugin.PX_PER_STEP
+            self.identify(ctrl)
+            height = plugin.RUNG_PX * (plugin.INT_LAST_RUNG + 2)
+            self.assertEqual(ctrl.overlay_rect, (10, 20, plugin.OVERLAY_W, height))
+            self.assertEqual(ctrl.ladder_rect, (10, 20, 10 + plugin.OVERLAY_W, 20 + height))
+            self.assertEqual(ctrl.overlay.rect, ctrl.overlay_rect)
+            ctrl.overlay.refresh.assert_called()
+            ctrl._cancel()
+
+        def test_all_rungs_off_keeps_defaults(self):
+            bc = c4d.BaseContainer()
+            for i in range(len(plugin.ALL_RUNGS)):
+                bc.SetBool(plugin.PREFS_RUNG_BASE + i, False)
+            with mock.patch.object(plugin, '_prefs', return_value=bc):
+                self.assertEqual(plugin._active_rungs(), plugin.RUNGS)
 
         def test_disappearing_adapter_is_not_a_target(self):
             class Gone:

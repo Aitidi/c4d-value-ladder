@@ -15,7 +15,7 @@ import c4d
 PYP = os.path.join(os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else
                    os.environ["VALUELADDER_TOOLS"],
                    "..", "plugin", "ValueLadder", "ValueLadder.pyp")
-DEV_ID = 1000003
+DEV_ID = 1000003    # Maxon test id: the dev host is never shipped
 
 
 class DevHost(c4d.gui.GeDialog):
@@ -53,6 +53,8 @@ class DevHost(c4d.gui.GeDialog):
                 text = "识别失败：未读到支持的数值变化"
             elif "focus changed" in last:
                 text = "识别已退出：输入焦点发生变化"
+            elif "fallback disabled" in last:
+                text = "识别失败：未识别到参数标签（回退已关闭）"
         self.SetString(2, text)
 
     def Command(self, id, msg):
@@ -129,6 +131,9 @@ def reload(pyp=PYP):
     mod = importlib.util.module_from_spec(spec)
     loader.exec_module(mod)
     old = getattr(c4d, "_valueladder_dev", None)
+    if old is not None:
+        # Keep a test switch such as ENABLE_PROBE_FALLBACK across reloads.
+        mod.ENABLE_PROBE_FALLBACK = getattr(old[2], "ENABLE_PROBE_FALLBACK", mod.ENABLE_PROBE_FALLBACK)
     installed = [ctrl for ctrl in _controllers()
                  if (not old or ctrl is not old[0])
                  and ctrl.hook_thread and ctrl.hook_thread.is_alive()]

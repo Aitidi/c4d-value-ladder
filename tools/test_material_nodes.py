@@ -110,6 +110,57 @@ def run_checks(source):
             graph = self.doc.GetFirstMaterial().GetNodeMaterialReference().GetGraph(space)
             self.assertAlmostEqual(float(graph.GetNode(path).GetPortValue()), self.original + .1)
 
+        def port_label(self):
+            port_id = str(self.graph.GetNode(self.adapter.paths[self.key]).GetId())
+            raw = port_id.encode('ascii')
+            raw += b'\0' * (-len(raw) % 4)
+            descid = c4d.DescID()
+            for i in range(0, len(raw), 4):
+                descid.PushId(c4d.DescLevel(int.from_bytes(raw[i:i + 4], 'big', signed=True),
+                                            c4d.DTYPE_SUBCONTAINER, 0))
+            descid.PushId(c4d.DescLevel(1, c4d.DTYPE_REAL, 0))
+            return descid
+
+        def label_ctrl(self):
+            ctrl = plugin.Controller(lambda: None)
+            ctrl.doc = self.doc
+            ctrl.phase = plugin.PREPARING
+            ctrl._redraw = lambda **kwargs: None
+            ctrl._open_overlay = lambda: setattr(ctrl, 'overlay_rect', (0, 0, 52, 416))
+            ctrl.out_dx, ctrl.pt = plugin.PX_PER_STEP * 2, (100, 0)
+            return ctrl
+
+        def path_value(self, doc_mat=None):
+            mat = doc_mat or self.doc.GetFirstMaterial()
+            graph = mat.GetNodeMaterialReference().GetGraph(space)
+            return float(graph.GetNode(self.adapter.paths[self.key]).GetPortValue())
+
+        def test_port_label_scrub_commit_records_one_undo(self):
+            ctrl = self.label_ctrl()
+            with mock.patch.object(plugin, '_cursors_scrub'), \
+                    mock.patch.object(plugin, '_active_rungs', return_value=[1.0, 0.1]):
+                self.assertTrue(ctrl._begin_label((self.port_label(), [self.mat])))
+                self.assertEqual(ctrl.phase, plugin.LADDER)
+                self.assertEqual(ctrl.param.pid, self.key)
+                self.assertFalse(ctrl.scrub_undo)
+                self.assertTrue(ctrl.commit_on_release)
+                self.assertAlmostEqual(self.path_value(), self.original + 2)
+                ctrl._finish()
+            self.assertAlmostEqual(self.path_value(), self.original + 2)
+            self.doc.DoUndo(False)
+            self.assertAlmostEqual(self.path_value(), self.original)
+            self.doc.DoRedo()
+            self.assertAlmostEqual(self.path_value(), self.original + 2)
+
+        def test_port_label_cancel_leaves_no_undo(self):
+            ctrl = self.label_ctrl()
+            with mock.patch.object(plugin, '_cursors_scrub'), \
+                    mock.patch.object(plugin, '_active_rungs', return_value=[1.0, 0.1]):
+                self.assertTrue(ctrl._begin_label((self.port_label(), [self.mat])))
+                ctrl._cancel()
+            self.assertAlmostEqual(self.path_value(), self.original)
+            self.assertIsNone(self.doc.FindUndoPtr(self.mat, c4d.UNDOTYPE_CHANGE))
+
         def test_clones_have_distinct_keys(self):
             other = self.mat.GetClone()
             self.doc.InsertMaterial(other)

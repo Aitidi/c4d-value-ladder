@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- ValueLadder icon, after the Boghma Icon Template for Cinema 4D Plugin
+       (DunHouGo, CC BY 4.0): dark rounded square, one bold glyph on a circular
+       keyline, a single accent colour. Rungs shrink from the coarse step at the
+       top to the fine step at the bottom; the active rung scrubs left/right. -->
+  <rect x="0" y="0" width="512" height="512" rx="112" fill="#1E1E1E"/>
+  <g fill="#8C8C8C">
+    <rect x="96"  y="98"  width="320" height="44" rx="22"/>
+    <rect x="126" y="166" width="260" height="44" rx="22"/>
+    <rect x="186" y="302" width="140" height="44" rx="22"/>
+    <rect x="216" y="370" width="80"  height="44" rx="22"/>
+  </g>
+  <rect x="156" y="234" width="200" height="44" rx="22" fill="#F9B826"/>
+  <g fill="none" stroke="#F9B826" stroke-width="26" stroke-linecap="round" stroke-linejoin="round">
+    <polyline points="114,222 80,256 114,290"/>
+    <polyline points="398,222 432,256 398,290"/>
+  </g>
+</svg>

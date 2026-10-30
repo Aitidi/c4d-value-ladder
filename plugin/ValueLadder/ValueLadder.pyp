@@ -6,10 +6,14 @@ size, then move left/right to change the value. Release to commit (one undo
 step), right-click while holding to cancel.
 
 How it works (Windows only):
-  1. Middle-button down over a numeric field automatically focuses it with a
-     left click and commits pending text before recording the baseline.
-  2. Show the ladder and try +/-0.001, +/-1, then native Up/Down steps.
-     Identify the changed numeric parameter from snapshots and restore it.
+  1. Middle-button down over a numeric field drags the field's label a few
+     pixels into a parked, near-invisible receiver dialog. The label's own
+     DRAGTYPE_DESCID names the exact parameter and objects; the drop is
+     refused, so nothing is edited.
+  2. Without a usable label, focus the field, commit pending text, then try
+     +/-0.001, +/-1 and native Up/Down steps. Identify the changed numeric
+     parameter from snapshots and restore it. A label that names a document
+     setting narrows this probe to that parameter.
   3. Over the ladder, vertical motion chooses a rung; beside it, horizontal
      travel adjusts the parameter through its API. Native input supplies the
      gesture undo. The older simulated mouse-drag probe remains disabled.
@@ -26,20 +30,26 @@ from collections import deque
 import c4d
 import maxon
 
-__version__ = "0.8.12"
+__version__ = "0.9.11"
 
-# Maxon reserves 1000001-1000010 for testing. Replace with IDs registered at
-# https://developers.maxon.net before a public release.
-PLUGIN_ID = 1000001
-COMMAND_ID = 1000002
-PREFS_ID = 1000004      # 1000003 is taken by tools/dev_reload.py
+# Registered at https://developers.maxon.net/forum/pid (labels in comments).
+PLUGIN_ID = 1072634             # ValueLadderMessage
+COMMAND_ID = 1072637            # ValueLadderToggle
+PREFS_ID = 1072639              # ValueLadderPreferences
+SETTINGS_COMMAND_ID = 1072640   # ValueLadderSettingsCommand
+# Before 0.9.9 the preferences lived under Maxon's test id 1000001.
+LEGACY_PREFS_KEY = 1000001
 
 # Preferences page (res/description/valueladderprefs.*). The values live in a
 # sub-container of the world container, keyed by PLUGIN_ID, so they persist.
 PREFS_DESCRIPTION = "valueladderprefs"
 PREFS_ENABLE_AT_STARTUP = 1000
+PREFS_ENABLED_NOW = 1001       # the running session, not stored
+PREFS_RUNG_BASE = 1100  # + index in ALL_RUNGS, see valueladderprefs.h
 
-# Ladder behaviour.
+# Ladder behaviour. Users pick the active steps from ALL_RUNGS in the
+# preferences; RUNGS are the defaults.
+ALL_RUNGS = [10000.0, 1000.0, 100.0, 10.0, 1.0, 0.1, 0.01, 0.001, 0.0001]
 RUNGS = [1000.0, 100.0, 10.0, 1.0, 0.1, 0.01, 0.001]
 INT_LAST_RUNG = RUNGS.index(1.0)   # integers stop at a step of 1
 PX_PER_STEP = 6         # pixels of horizontal travel per step (native scrub: ~2)
@@ -47,6 +57,15 @@ SCRUB_PX = 8            # native scrub that reveals the parameter (~4 native ste
 FOCUS_PROBES = (("small", 0.001), ("small", -0.001),
                 ("whole", 1), ("whole", -1), ("native", 1), ("native", -1))
 ENABLE_LEGACY_PROBE = False  # automatic focus uses numeric probes, never native drag
+ENABLE_LABEL_PROBE = True    # read the parameter from its label's description drag first
+# Every parameter is identified by its label alone. Set True to focus fields
+# without a usable label and type probe values instead.
+ENABLE_PROBE_FALLBACK = False
+LABEL_MAX_GAP = 130     # px at 96 dpi between a field and the end of its label text
+LABEL_GLYPH_GAP = 5     # px at 96 dpi: wider blank runs end the label (keyframe diamond)
+LABEL_INK = 40          # channel difference from the row background counted as text
+LABEL_DRAG_PX = 4       # px at 96 dpi per synthetic drag step; C4D starts a drag after ~10
+LABEL_WAIT = 0.25       # seconds to wait for the receiver to see the drag
 SCRUB_TRIES = (1, 1, -1)  # direction of each try, relative to the user's drag
 MAX_CANDIDATES = 500    # nodes snapshotted per gesture
 EVENT_INTERVAL = 0.1    # seconds between manager refreshes while scrubbing
@@ -173,6 +192,11 @@ if IS_WINDOWS:
                                 ctypes.c_void_p, ctypes.c_void_p, wt.UINT]
     gdi32.DeleteObject.argtypes = [ctypes.c_void_p]
     gdi32.DeleteDC.argtypes = [ctypes.c_void_p]
+    user32.FindWindowExW.argtypes = [wt.HWND, wt.HWND, wt.LPCWSTR, wt.LPCWSTR]
+    user32.FindWindowExW.restype = wt.HWND
+    user32.IsWindow.argtypes = [wt.HWND]
+    user32.ShowWindow.argtypes = [wt.HWND, ctypes.c_int]
+    user32.SetLayeredWindowAttributes.argtypes = [wt.HWND, wt.DWORD, ctypes.c_ubyte, wt.DWORD]
 
 WH_MOUSE_LL = 14
 WH_KEYBOARD_LL = 13
@@ -193,7 +217,12 @@ WS_EX_LAYERED, WS_EX_TRANSPARENT = 0x00080000, 0x00000020
 ULW_OPAQUE = 0x00000004
 SPI_SETCURSORS = 0x0057
 HWND_TOPMOST = wt.HWND(-1) if sys.platform.startswith("win") else None
+HWND_NOTOPMOST = wt.HWND(-2) if sys.platform.startswith("win") else None
 SWP_SHOWWINDOW, SWP_NOACTIVATE = 0x0040, 0x0010
+SWP_NOSIZE, SWP_ASYNCWINDOWPOS = 0x0001, 0x4000
+WS_EX_APPWINDOW = 0x00040000
+LWA_ALPHA = 0x00000002
+SW_HIDE = 0
 SRCCOPY = 0x00CC0020
 
 INPUT_MOUSE = 0
@@ -310,6 +339,11 @@ def _cursors_scrub(on):
         user32.SystemParametersInfoW(SPI_SETCURSORS, 0, None, 0)
 
 
+def _status(text):
+    # 2027 moved StatusSetText to c4d.gui; earlier releases only have c4d's.
+    (getattr(c4d.gui, "StatusSetText", None) or c4d.StatusSetText)(text)
+
+
 def _gui_rgb(color_id):
     v = c4d.gui.GetGuiWorldColor(color_id)
     return (int(round(v.x * 255)), int(round(v.y * 255)), int(round(v.z * 255)))
@@ -319,10 +353,13 @@ def _gui_rgb(color_id):
 # Field detection (runs on the hook thread, must be fast)
 # ---------------------------------------------------------------------------
 class FieldDetector(object):
-    WIDTH, HEIGHT = 640, 72
+    WIDTH, HEIGHT = 640, 72     # capture size at 96 dpi; check() scales it
 
     def __init__(self):
+        self.width = self.WIDTH  # the current capture's size
         self.edit_colors = []
+        self.label = None       # screen point on the last field's label text
+        self.label_field = 0    # fields between it and the label: the vector component
         self.refresh_colors()
 
     def refresh_colors(self):
@@ -337,20 +374,28 @@ class FieldDetector(object):
         self.edit_colors = colors or [(28, 28, 28)]
 
     def _is_edit(self, buf, x, y):
-        i = (y * self.WIDTH + x) * 4
+        i = (y * self.width + x) * 4
         b, g, r = buf[i], buf[i + 1], buf[i + 2]
         for (er, eg, eb) in self.edit_colors:
             if abs(r - er) <= 3 and abs(g - eg) <= 3 and abs(b - eb) <= 3:
                 return True
         return False
 
-    def check(self, px, py):
-        """Return ("field", left edge x, centre y) in screen pixels, or (reason, None, None)."""
-        w, h = self.WIDTH, self.HEIGHT
+    def check(self, px, py, scale=1.0):
+        """Return ("field", left edge x, centre y) in screen pixels, or (reason, None, None).
+
+        A field also records self.label: a point on the label text to its
+        left, or None when no plain text label sits there.
+        """
+        self.label = None
+        self.label_field = 0
+        w, h = int(round(self.WIDTH * scale)), int(round(self.HEIGHT * scale))
+        self.width = w
         x0, y0 = px - w // 2, py - h // 2
         buf = _grab_screen(x0, y0, w, h)
         cx, cy = px - x0, py - y0
-        span = range(max(0, cx - 40), min(w, cx + 41))
+        reach = int(round(40 * scale))
+        span = range(max(0, cx - reach), min(w, cx + reach + 1))
 
         def coverage(y):
             return sum(1 for x in span if self._is_edit(buf, x, y)) / float(len(span))
@@ -367,7 +412,7 @@ class FieldDetector(object):
             bottom += 1
         if top == 0 or bottom == h - 1:
             return "unbounded", None, None
-        if not (8 <= bottom - top + 1 <= 48):
+        if not (8 * scale <= bottom - top + 1 <= 48 * scale):
             return "height %d" % (bottom - top + 1), None, None
 
         # The padding rows next to the border are clean; measure the width there.
@@ -384,9 +429,127 @@ class FieldDetector(object):
                 right += 1
             if right - left + 1 > widest:
                 widest, field_left = right - left + 1, left
-        if not 20 <= widest <= 520:
+        if not 20 * scale <= widest <= 520 * scale:
             return "width %d" % widest, None, None
+        # The node editor's canvas has the edit colour too, cut into cells by
+        # one-pixel grid lines. A field sits on the row background instead.
+        d = max(2, int(round(2 * scale)))
+        right = field_left + widest - 1
+        around = [(field_left - d, cy), (right + d, cy), (cx, top - d), (cx, bottom + d)]
+        if sum(1 for x, y in around if 0 <= x < w and 0 <= y < h and self._is_edit(buf, x, y)) >= 3:
+            return "grid", None, None
+        label = self._label(buf, field_left, top, bottom, scale)
+        if label is not None:
+            self.label = (x0 + label[0], y0 + label[1])
+            self.label_field = label[2]
         return "field", x0 + field_left, y0 + (top + bottom) // 2
+
+    def _label(self, buf, field_left, top, bottom, scale):
+        """The label text left of a field, as a buffer point, or None.
+
+        Only plain text on the row background qualifies. Another field, a
+        drop-down or a button (anything filling the row height) rejects the
+        row: pressing those would edit or open something. The point is on the
+        last glyph, away from the keyframe diamond at the label's left.
+        """
+        w = self.width
+        cy = (top + bottom) // 2
+        start = field_left - max(3, int(round(3 * scale)))   # past the field border
+        if start <= 0:
+            return None
+        rows = range(top, bottom + 1)
+
+        def px(x, y):
+            i = (y * w + x) * 4
+            return buf[i + 2], buf[i + 1], buf[i]
+
+        # Just above the field: past a focus border, and not a sibling field's.
+        bg = px(min(field_left + 4, w - 1), max(0, top - max(2, int(round(2 * scale)))))
+
+        def ink(x, y):
+            return max(abs(a - b) for a, b in zip(px(x, y), bg)) > LABEL_INK
+
+        def inked(x):
+            return any(ink(x, y) for y in rows)
+
+        def icon(left, right):
+            # Port circles of node parameters (hollow or connected), and
+            # keyframe diamonds: small, square, round corners. A press there
+            # exposes or edits a port. Letters such as X, Y, Z ink a corner.
+            ys = [y for y in rows if any(ink(x, y) for x in range(left, right + 1))]
+            if not ys:
+                return False
+            width, height = right - left + 1, ys[-1] - ys[0] + 1
+            if width > 16 * scale or abs(width - height) > max(1, int(round(scale))):
+                return False
+            return not any(ink(x, y) for x in (left, right) for y in (ys[0], ys[-1]))
+
+        reach = max(3, int(round(3 * scale)))
+
+        def field_at(x):
+            # A sibling field of the same row, or the focus border around one.
+            return any(self._is_edit(buf, x - k, cy) for k in range(reach + 1) if x - k >= 0)
+
+        def in_field(x):
+            # Text inside a field never reaches its padding rows.
+            return any(self._is_edit(buf, x, y) for y in (cy, top + 1, bottom - 1))
+
+        max_gap = max(4, int(round(LABEL_GLYPH_GAP * scale)))
+        x = start
+        fields = 0
+        for icons in range(3):          # skip at most a couple of icons
+            right = None
+            limit = max(0, x - int(LABEL_MAX_GAP * scale))
+            while x > limit:
+                if self._is_edit(buf, x, cy) or (inked(x) and field_at(x)):
+                    # The Y and Z fields of a vector row share the X field's
+                    # label; count the fields passed to name the component.
+                    if icons or fields == 2:
+                        return None
+                    edge = x
+                    while x > 0 and not in_field(x) and edge - x <= reach:
+                        x -= 1                  # its right border
+                    inner = x
+                    while x > 0 and in_field(x):
+                        x -= 1
+                    if inner - x < 16 * scale:
+                        return None
+                    for _ in range(reach):      # its left border
+                        if x > 0 and inked(x):
+                            x -= 1
+                    fields += 1
+                    limit = max(0, x - int(LABEL_MAX_GAP * scale))
+                    continue
+                if inked(x):
+                    right = x
+                    break
+                x -= 1
+            if right is None:
+                return None
+            left, gap = right, 0
+            x = right - 1
+            while x > 0 and gap <= max_gap:
+                if self._is_edit(buf, x, cy):
+                    break
+                if inked(x):
+                    left, gap = x, 0
+                else:
+                    gap += 1
+                x -= 1
+            if not icon(left, right):
+                break
+            x = left - 1
+        else:
+            return None
+        span = range(left, right + 1)
+        if len(span) < 3:
+            return None
+        # Text never reaches the field's top and bottom rows; filled
+        # gadgets (drop-downs, buttons, colour swatches) do.
+        for y in (top, bottom):
+            if sum(1 for x in span if ink(x, y)) > len(span) * 0.1:
+                return None
+        return right - max(1, int(round(2 * scale))), cy, fields
 
 
 # ---------------------------------------------------------------------------
@@ -522,7 +685,8 @@ def _snapshot_description(node, snap):
 
 
 def _is_rs_camera(node):
-    return isinstance(node, c4d.BaseObject) and node.GetType() == c4d.Orscamera
+    rs_camera = getattr(c4d, "Orscamera", None)     # None without Redshift
+    return rs_camera is not None and isinstance(node, c4d.BaseObject) and node.GetType() == rs_camera
 
 
 def _rs_linked_focus(node):
@@ -1030,7 +1194,18 @@ class _NodePorts(object):
             return float((value.x, value.y, value.z)[descid[1]])
         return float(value) if self._kind(value) == "r" else int(value)
 
-    def SetParameter(self, descid, value, flags):
+    def vl_commit(self, descid, original, final):
+        """Record the gesture as one graph undo: the original value is put
+        back without undo, then the final one is written with it."""
+        self.SetParameter(descid, original, c4d.DESCFLAGS_SET_NONE)
+        doc = self.GetDocument()
+        doc.StartUndo()
+        try:
+            return self.SetParameter(descid, final, c4d.DESCFLAGS_SET_NONE, undo=True)
+        finally:
+            doc.EndUndo()
+
+    def SetParameter(self, descid, value, flags, undo=False):
         if value is None or self.graph.IsReadOnly():
             return False
         key, component = descid
@@ -1049,9 +1224,10 @@ class _NodePorts(object):
             data = typ(*parts)
         else:
             data = typ(value)
-        undo = maxon.DataDictionary()
-        undo.Set(maxon.nodes.UndoMode, maxon.nodes.UNDO_MODE.NONE)
-        with self.graph.BeginTransaction(undo) as transaction:
+        settings = maxon.DataDictionary()
+        if not undo and hasattr(maxon.nodes, "UndoMode"):   # older builds record every write
+            settings.Set(maxon.nodes.UndoMode, maxon.nodes.UNDO_MODE.NONE)
+        with self.graph.BeginTransaction(settings) as transaction:
             port.SetPortValue(data)
             transaction.Commit()
         return True
@@ -1519,6 +1695,210 @@ class Param(object):
 
 
 # ---------------------------------------------------------------------------
+# Label drag: the Attribute Manager's own parameter identity
+# ---------------------------------------------------------------------------
+def _label_port(levels):
+    """("port", port id, component) for a node-parameter label, or None.
+
+    Node material and Scene Nodes labels pack the port id string into
+    DTYPE_SUBCONTAINER levels, four big-endian ASCII bytes each, e.g.
+    com.redshift3d.redshift4c4d.nodes.core.openpbrmaterial.base_weight or a
+    Scene Nodes "pointin", followed by one value level.
+    """
+    packed = [level.id for level in levels[:-1]]
+    if not packed or any(level.dtype != c4d.DTYPE_SUBCONTAINER for level in levels[:-1]):
+        return None
+    try:
+        text = b"".join((i & 0xFFFFFFFF).to_bytes(4, "big") for i in packed)
+        text = text.rstrip(b"\0").decode("ascii")
+    except Exception:
+        return None
+    if len(text) < 2 or not text[0].isalpha() or not all(c.isalnum() or c in "._-" for c in text):
+        return None
+    last = levels[-1]
+    comp = _VCOMP.index(last.id) if last.id in _VCOMP else None
+    return "port", text, comp
+
+
+def _label_matches(label_key, key):
+    """Whether a probed (key, kind, comp) is the parameter a label named."""
+    if label_key[0] == "port":
+        port = label_key[1]
+        if not isinstance(key[0], str) or not key[0].endswith(port):
+            return False
+        before = key[0][:-len(port)][-1:]
+        return (not (before.isalnum() or before == "_")      # "pointin", not "xpointin"
+                and (label_key[2] is None or key[2] == label_key[2]))
+    return key == label_key
+
+
+def _label_target(descid):
+    """(key, kind, component) for a dragged label's DescID, or None.
+
+    Matches the snapshot keys: a top-level id, or (ID_USERDATA, n). A trailing
+    VECTOR_X/Y/Z level names one component of a vector parameter. Node ports
+    give ("port", port id, component), see _label_port.
+    """
+    try:
+        levels = [descid[i] for i in range(descid.GetDepth())]
+    except Exception:
+        return None
+    port = _label_port(levels)
+    if port is not None:
+        return port
+    comp = None
+    if (len(levels) >= 2 and levels[-2].dtype == c4d.DTYPE_VECTOR
+            and levels[-1].id in _VCOMP):
+        comp = _VCOMP.index(levels[-1].id)
+        levels = levels[:-1]
+    kind = _DESC_KINDS.get(levels[-1].dtype)
+    if kind is None or (comp is not None and kind != "v"):
+        return None   # a whole vector's component comes from the pressed field
+    ids = tuple(level.id for level in levels)
+    if len(ids) == 1:
+        return ids[0], kind, comp
+    if len(ids) == 2 and ids[0] == c4d.ID_USERDATA:
+        return ids, kind, comp
+    return None
+
+
+def _label_node(doc, node):
+    """Wrap what a label drag names the way the candidate list does."""
+    if isinstance(node, c4d.plugins.BasePlugin):
+        if node.GetType() == c4d.PLUGINTYPE_TOOL:
+            return _ToolNode(doc, node)
+        if node.GetType() == c4d.PLUGINTYPE_PREFS:
+            for page in _prefs_pages():
+                if page.plugin == node:
+                    return page
+        return None
+    return node
+
+
+def _label_port_target(doc, target, nodes, field=0):
+    """(adapter, snapshot key, kind, component) for a node-port label, or None.
+
+    The label names the port id; the adapters of the dragged materials' and
+    the Scene Nodes graphs' selected nodes say which node shows it. A vector
+    label without a component stands for the field-th field of its row.
+    """
+    materials = [n for n in nodes if isinstance(n, c4d.BaseMaterial)]
+    owners = []
+    for get in (lambda: doc.GetActiveObjects(c4d.GETACTIVEOBJECTFLAGS_NONE), doc.GetActiveTags):
+        try:
+            owners.extend(get())
+        except Exception:
+            pass
+    owners.extend(n for n in nodes if isinstance(n, c4d.BaseList2D) and n not in owners)
+    for adapter in _node_ports(materials, doc) + _scene_node_ports(doc, owners):
+        snap = _snapshot(adapter)
+        for key, (kind, _) in snap.items():
+            if not _label_matches(("port", target[1], None), (key, kind, None)):
+                continue
+            comp = _label_comp(kind, target[2], field)
+            if comp is not False:
+                return adapter, key, kind, comp
+    return None
+
+
+def _label_comp(kind, comp, field):
+    """The component a label names, or False when the pressed field can't be it.
+
+    A component label (P . X) sits right before its own field. A vector's
+    shared label (Point) stands for the field-th field after it; any other
+    label has a single field.
+    """
+    if kind != "v":
+        return None if comp is None and field == 0 else False
+    if comp is not None:
+        return comp if field == 0 else False
+    return field if field < len(_VCOMP) else False
+
+
+class _LabelReceiver(c4d.gui.GeDialog):
+    """An async dialog that only listens for a parameter-label drag.
+
+    Cinema 4D draws every manager gadget itself: there is no child HWND, UI
+    Automation or MSAA element per field. A label drag, though, carries
+    DRAGTYPE_DESCID with the exact DescID and the edited objects. The window
+    stays parked off-screen at alpha 1 and is moved under the pointer only
+    while a probe drags a label; it refuses every drop.
+    """
+    TITLE = "ValueLadder label receiver"
+    SIZE = 160
+
+    def __init__(self):
+        super().__init__()
+        self.hwnd = None
+        self.hit = None
+        self.armed = False
+
+    def CreateLayout(self):
+        self.SetTitle(self.TITLE)
+        return True
+
+    def Message(self, msg, result):
+        if msg.GetId() == c4d.BFM_DRAGRECEIVE:
+            if self.armed and self.hit is None:
+                try:
+                    drag = self.GetDragObject(msg)
+                    if isinstance(drag, dict) and drag.get("type") == c4d.DRAGTYPE_DESCID:
+                        data = drag.get("object") or {}
+                        self.hit = (data.get("did"), list(data.get("arr") or []))
+                except Exception:
+                    pass
+            return self.SetDragDestination(c4d.MOUSE_FORBIDDEN)
+        return c4d.gui.GeDialog.Message(self, msg, result)
+
+    def _find(self):
+        own = kernel32.GetCurrentProcessId()
+        hwnd = None
+        while True:
+            hwnd = user32.FindWindowExW(None, hwnd, None, self.TITLE)
+            if not hwnd:
+                return None
+            pid = wt.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if pid.value == own:
+                return hwnd
+
+    def ensure(self):
+        """Main thread. Open once, then keep the window parked and inert."""
+        if self.hwnd and user32.IsWindow(self.hwnd):
+            return True
+        if not self.IsOpen() and not self.Open(c4d.DLG_TYPE_ASYNC, xpos=-4000, ypos=-4000,
+                                                 defaultw=self.SIZE, defaulth=self.SIZE):
+            return False
+        hwnd = self._find()
+        if not hwnd:
+            return False
+        # Cinema 4D clamps the position on screen and gives the window a
+        # taskbar button. Restyle it in the same main-thread call, before it
+        # paints: no taskbar entry, no activation, alpha 1, off-screen.
+        user32.ShowWindow(hwnd, SW_HIDE)
+        ex = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+        user32.SetWindowLongW(hwnd, GWL_EXSTYLE, (ex & ~WS_EX_APPWINDOW)
+                              | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED)
+        user32.SetLayeredWindowAttributes(hwnd, 0, 1, LWA_ALPHA)
+        self.hwnd = hwnd
+        self.park(sync=True)
+        return True
+
+    def place(self, x, y):
+        """Any thread: centre the client area under the pointer."""
+        r = wt.RECT()
+        user32.GetWindowRect(self.hwnd, ctypes.byref(r))
+        w, h = r.right - r.left, r.bottom - r.top
+        user32.SetWindowPos(self.hwnd, HWND_TOPMOST, x - w // 2, y - h // 3, 0, 0,
+                            SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_ASYNCWINDOWPOS)
+
+    def park(self, sync=False):
+        flags = SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW
+        user32.SetWindowPos(self.hwnd, HWND_NOTOPMOST, -4000, -4000, 0, 0,
+                            flags if sync else flags | SWP_ASYNCWINDOWPOS)
+
+
+# ---------------------------------------------------------------------------
 # Overlay
 # ---------------------------------------------------------------------------
 class LadderOverlay(object):
@@ -1552,7 +1932,8 @@ class LadderOverlay(object):
         if not self.native_hwnd:
             raise RuntimeError("could not create native ladder window")
         try:
-            self.font = gdi32.CreateFontW(-12, 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 5, 0, "Segoe UI")
+            size = -int(round(12 * self.ctrl.dpi_scale))
+            self.font = gdi32.CreateFontW(size, 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 5, 0, "Segoe UI")
             if not self.font:
                 raise RuntimeError("could not create ladder font")
             self.refresh()
@@ -1694,6 +2075,12 @@ class Controller(object):
         self._key_proc = HOOKPROC(self._proc_key)
         self.focus_probe = False
         self.focus_attempt = 0
+        self.label_pt = None          # label text of the pressed field, see FieldDetector
+        self.label_field = 0          # vector component a shared label stands for
+        self.label_tried = False      # the label drag ran for this gesture
+        self.commit_on_release = False  # label-found graph ports record their undo on release
+        self.dpi_scale = 1.0
+        self.receiver = None
         self.input_root = None
         self.probe_error = None
         self.probe_serial = 0
@@ -1743,6 +2130,12 @@ class Controller(object):
         self.probe_serial += 1
         self._close_overlay()
         self._release_capture()
+        if self.receiver is not None:
+            try:
+                self.receiver.Close()
+            except Exception:
+                pass
+            self.receiver = None
         if self.cursors_swapped:
             _cursors_scrub(False)
             self.cursors_swapped = False
@@ -1888,9 +2281,19 @@ class Controller(object):
         if name.value.upper().startswith("MAXON-DRAWPORT"):
             return False  # viewport: leave camera navigation alone
         try:
-            return self.detector.check(x, y)[0] == "field"
+            self.dpi_scale = (user32.GetDpiForWindow(hwnd) or 96) / 96.0
+        except Exception:
+            self.dpi_scale = 1.0
+        self.label_pt = None
+        self.label_tried = False
+        try:
+            over = self.detector.check(x, y, self.dpi_scale)[0] == "field"
         except Exception:
             return False
+        if over:
+            self.label_pt = self.detector.label
+            self.label_field = self.detector.label_field
+        return over
 
     # -- main thread ---------------------------------------------------------
     def pump(self):
@@ -1915,6 +2318,9 @@ class Controller(object):
                         self._release_capture()
                     else:
                         self._begin_ready()
+            elif ev == "labelled":
+                if self.phase == PREPARING:
+                    self._finish_label_probe()
             elif ev == "scrubbed":
                 self._finish_identify()
         if self.phase == PENDING:
@@ -1955,6 +2361,7 @@ class Controller(object):
             self.frozen = False
             self.ladder_rect = None
         self.phase = IDLE
+        self.commit_on_release = False
         self.probe_serial += 1
 
     def _input_ready(self):
@@ -1965,10 +2372,27 @@ class Controller(object):
                 and not any(user32.GetAsyncKeyState(k) & 0x8000
                             for k in (0x10, 0x11, 0x12, 0x5B, 0x5C)))
 
+    def _prepare_valid(self, serial):
+        """Any thread: the gesture that started preparation is still current."""
+        return (serial == self.probe_serial and not self.cancelled and not self.released
+                and user32.GetForegroundWindow() == self.input_root
+                and not any(user32.GetAsyncKeyState(k) & 0x8000
+                            for k in (0x10, 0x11, 0x12, 0x5B, 0x5C)))
+
     def _begin(self):
-        """Middle-button down: focus the field before recording its value."""
+        """Middle-button down: name the field by its label, else focus it."""
         self.doc = c4d.documents.GetActiveDocument()
         if self.released or self.cancelled:
+            self._release_capture()
+            return
+        if (self.focus_probe and self._input_ready() and self.label_pt and not self.label_tried
+                and self._receiver_ready()):
+            self._launch_label_probe()
+            return
+        if self.focus_probe and not ENABLE_PROBE_FALLBACK:
+            reason = "no parameter label found" if self.label_pt is None else "label not recognized"
+            self._dbg("fallback disabled", reason)
+            _status("ValueLadder: %s (probe fallback disabled)" % reason)
             self._release_capture()
             return
         if self.focus_probe and self._input_ready():
@@ -1982,10 +2406,7 @@ class Controller(object):
             self._hide_cursor(True)
 
             def valid():
-                return (serial == self.probe_serial and not self.cancelled and not self.released
-                        and user32.GetForegroundWindow() == self.input_root
-                        and not any(user32.GetAsyncKeyState(k) & 0x8000
-                                    for k in (0x10, 0x11, 0x12, 0x5B, 0x5C)))
+                return self._prepare_valid(serial)
 
             def ready():
                 try:
@@ -2022,6 +2443,198 @@ class Controller(object):
             return
         self._begin_ready()
 
+    def _receiver_ready(self):
+        if not ENABLE_LABEL_PROBE:
+            return False
+        try:
+            if self.receiver is None:
+                self.receiver = _LabelReceiver()
+            return self.receiver.ensure()
+        except Exception as error:
+            self._dbg("label receiver unavailable", error)
+            return False
+
+    def _launch_label_probe(self):
+        """Drag the field's label a few pixels into the parked receiver.
+
+        Nothing is edited: the receiver refuses the drop. A press on plain
+        label text only highlights that parameter in the Attribute Manager.
+        """
+        self.phase = PREPARING
+        self.probe_error = None
+        serial = self.probe_serial
+        receiver = self.receiver
+        receiver.hit, receiver.armed = None, True
+        with self.lock:
+            self.frozen = True
+            self.held_dx = self.held_dy = 0
+            pt = self.pt
+        self._hide_cursor(True)
+        lx, ly = self.label_pt
+        step = max(3, int(round(LABEL_DRAG_PX * self.dpi_scale)))
+
+        def run():
+            pressed = False
+            try:
+                if not self._prepare_valid(serial):
+                    raise RuntimeError("focus changed before label probe")
+                _move_to(lx, ly)
+                time.sleep(0.02)
+                _send_mouse(MOUSEEVENTF_LEFTDOWN)
+                pressed = True
+                time.sleep(0.03)
+                for i in range(1, 4):
+                    _move_to(lx + step * i, ly)
+                    time.sleep(0.01)
+                x = lx + step * 3
+                receiver.place(x, ly)
+                time.sleep(0.02)
+                deadline = time.perf_counter() + LABEL_WAIT
+                i = 0
+                while receiver.hit is None and time.perf_counter() < deadline:
+                    if not self._prepare_valid(serial):
+                        raise RuntimeError("focus changed during label probe")
+                    i += 1
+                    _move_to(x + 1 + i % 2, ly)   # drag-receive needs pointer motion
+                    time.sleep(0.015)
+            except Exception as error:
+                self.probe_error = str(error)
+            finally:
+                if pressed:
+                    _send_mouse(MOUSEEVENTF_LEFTUP)   # over the receiver: a refused drop
+                time.sleep(0.02)
+                try:
+                    receiver.park()
+                except Exception:
+                    pass
+                if serial == self.probe_serial:
+                    with self.lock:
+                        target = (pt[0] + self.held_dx, pt[1] + self.held_dy)
+                        self.out_dx += target[0] - pt[0]
+                        self.pt = self.resume_pt = target
+                        self.held_dx = self.held_dy = 0
+                    _move_to(*target)
+                    self._dbg("label probe", "hit" if receiver.hit else "none",
+                              self.probe_error or "")
+                    self._post("labelled")
+        threading.Thread(target=run, name="ValueLadderLabelProbe", daemon=True).start()
+
+    def _finish_label_probe(self):
+        self._hide_cursor(False)
+        with self.lock:
+            self.frozen = False
+        receiver = self.receiver
+        receiver.armed = False
+        hit, receiver.hit = receiver.hit, None
+        if self.released or self.cancelled or not self._input_ready():
+            self._dbg("label probe cancelled", self.probe_error or "released or focus changed")
+            self._release_capture()
+            return
+        if self._begin_label(hit):
+            return
+        # No usable label: the native probe, unless it is disabled.
+        self.label_tried = True
+        self._begin()
+
+    def _begin_label(self, hit):
+        try:
+            return self._label_ladder(hit)
+        except Exception as error:
+            self._dbg("label ladder failed", error)
+            if self.phase != PREPARING:
+                self._close_overlay()
+                self.phase = PREPARING
+            return False
+
+    def _label_ladder(self, hit):
+        """Enter the ladder straight from a label's DescID. False: fall back."""
+        if not hit or hit[0] is None:
+            return False
+        did, arr = hit
+        target = _label_target(did)
+        nodes = [_label_node(self.doc, n) for n in arr]
+        if (target is None and did.GetDepth() == 1 and did[0].id == c4d.DOCUMENT_DOCUNIT
+                and len(nodes) == 1 and isinstance(nodes[0], c4d.documents.BaseDocument)):
+            target = (c4d.DOCUMENT_DOCUNIT, "r", None)   # Project Scale, see _UnitScale
+        self._dbg("label", did, [getattr(n, "GetName", lambda: n)() for n in nodes], target)
+        if target is None or not nodes or any(n is None for n in nodes):
+            return False
+        pid, kind, comp = target
+        if pid == c4d.DOCUMENT_DOCUNIT and isinstance(nodes[0], c4d.documents.BaseDocument):
+            nodes = [_UnitScale(nodes[0])]
+        elif pid == "port":
+            port = _label_port_target(self.doc, target, nodes, self.label_field)
+            if port is None:
+                self._dbg("label port not found", target[1], self.label_field)
+                return False
+            nodes, (pid, kind, comp) = [port[0]], port[1:]
+        else:
+            comp = _label_comp(kind, comp, self.label_field)
+            if comp is False:
+                self._dbg("label field mismatch", self.label_field)
+                return False
+        found = []
+        for node in nodes:
+            try:
+                before = _snapshot(node)
+            except Exception:
+                return False
+            # A key the snapshot leaves out is hidden or derived (linked RS
+            # focus distance, global PSR): not a scrub target.
+            if before.get(pid, (None,))[0] != kind:
+                return False
+            found.append((node, before))
+        try:
+            param = Param(found[0][0], pid, kind, comp, snapshot=found[0][1])
+            for node, _ in found:
+                param.get(node)
+        except Exception:
+            return False
+        self.cands = [n for n, _ in found]
+        self.before = [b for _, b in found]
+        self.noisy = [set() for _ in found]
+        self.focus_attempt = 0
+        self.tries = 0
+        self._reset_rungs()
+        self.offset = 0.0
+        self.steps = 0
+        self.base_dx = 0
+        self.phase = PENDING
+        self._open_overlay()
+        if self.overlay_rect is None:
+            self._release_capture()
+            return True
+        _cursors_scrub(True)
+        self.cursors_swapped = True
+        self.scrub_undo = self._add_label_undo(self.cands)
+        self.commit_on_release = any(hasattr(n, "vl_commit") for n in self.cands)
+        self._enter_ladder(param, found, restore=False, hits={})
+        return True
+
+    def _add_label_undo(self, nodes):
+        """One undo step for the gesture, as the native input would add.
+
+        Tool settings, preferences and adapters have no undo; they are
+        restored by value instead.
+        """
+        owners = []
+        for node in nodes:
+            if hasattr(node, "vl_commit"):
+                return False    # graph ports record their undo on release
+            owner = getattr(node, "material", getattr(node, "owner", node))
+            if not isinstance(owner, c4d.BaseList2D) or isinstance(owner, c4d.documents.BaseDocument):
+                return False
+            if owner.GetDocument() != self.doc:
+                return False
+            if owner not in owners:
+                owners.append(owner)
+        try:
+            self.doc.StartUndo()
+            ok = all(self.doc.AddUndo(c4d.UNDOTYPE_CHANGE_SMALL, owner) for owner in owners)
+        finally:
+            self.doc.EndUndo()
+        return bool(ok)
+
     def _capture_probe_state(self):
         node_editor = self._window_title(self.origin).startswith("Node Editor")
         self.cands = _candidates(self.doc, self._floating(self.origin), node_editor=node_editor)
@@ -2046,8 +2659,7 @@ class Controller(object):
         self.tries = 0
         self.param = None
         self.targets = []
-        self.rung = RUNGS.index(1.0)
-        self.last_rung = len(RUNGS) - 1
+        self._reset_rungs()
         self.offset = 0.0
         self.steps = 0
         self.base_dx = 0
@@ -2062,6 +2674,12 @@ class Controller(object):
         self.cursors_swapped = True
         if self.focus_probe:
             self._launch_focus_probe()
+
+    def _reset_rungs(self):
+        """Take the steps chosen in the preferences for this gesture."""
+        self.rungs = _active_rungs()
+        self.rung = _home_rung(self.rungs)
+        self.last_rung = len(self.rungs) - 1
 
     def _window_title(self, pt):
         try:
@@ -2086,10 +2704,10 @@ class Controller(object):
             return -1
         if x >= left + w:
             return 1
-        rung = max(0, min(self.last_rung, (y - top) // RUNG_PX))
+        rung = max(0, min(self.last_rung, (y - top) // self._rung_px()))
         if rung != self.rung:
             # Bank what was scrubbed on the old rung and start fresh.
-            self.offset += (self.steps or 0) * RUNGS[self.rung]
+            self.offset += (self.steps or 0) * self.rungs[self.rung]
             self.steps = 0
             with self.lock:
                 self.base_dx = self.out_dx
@@ -2184,7 +2802,7 @@ class Controller(object):
                     except Exception:
                         pass
         self._dbg("identify aborted", message)
-        c4d.StatusSetText(message)
+        _status(message)
         self._close_overlay()
         self._redraw(force_event=True)
         self._release_capture()
@@ -2309,12 +2927,21 @@ class Controller(object):
                     pt = self.pt
                 self._launch_scrub(self.scrub_dir, pt)
                 return
-            c4d.StatusSetText("ValueLadder: no numeric parameter found under the cursor")
+            _status("ValueLadder: no numeric parameter found under the cursor")
             self._close_overlay()
             self._release_capture()
             return
         (pid, kind, comp), found = max(hits.items(), key=lambda kv: len(kv[1]))
         param = Param(found[0][0], pid, kind, comp, snapshot=found[0][1])
+        self._enter_ladder(param, found, restore=self.focus_probe, hits=hits)
+
+    def _enter_ladder(self, param, found, restore, hits):
+        """Start scrubbing param on the found (node, snapshot) pairs.
+
+        restore: put back the value a native probe changed before the first
+        ladder write; a failure aborts the gesture through hits.
+        """
+        pid, comp = param.pid, param.comp
         self.param = param
         self.targets = [n for n, _ in found]
         if param.rs_optics is not None:
@@ -2327,7 +2954,7 @@ class Controller(object):
         for _, before in found:
             k, v = before[pid]
             self.originals.append(v[comp] if k == "v" else param.from_snapshot(v))
-        if self.focus_probe:
+        if restore:
             try:
                 probed = param.get(self.targets[0])
                 self._dbg("focus matched", param.name, "original", self.originals[0],
@@ -2342,10 +2969,13 @@ class Controller(object):
                 return
             self._dbg("focus original restored", self.originals)
         if param.is_int:
-            self.last_rung = INT_LAST_RUNG
-            if self.rung > INT_LAST_RUNG:
-                self.offset += self.steps * RUNGS[self.rung]
-                self.rung = INT_LAST_RUNG
+            self.last_rung = _int_last_rung(self.rungs)
+            if self.rung > self.last_rung:
+                self.offset += self.steps * self.rungs[self.rung]
+                self.rung = self.last_rung
+            # Integers have no use for fractional steps: hide those rungs.
+            self.rungs = self.rungs[:self.last_rung + 1]
+            self._fit_overlay()
         self.phase = LADDER
         self._dbg("ladder", param.name, "targets", len(self.targets), "rung", self.rung)
         with self.lock:
@@ -2374,10 +3004,10 @@ class Controller(object):
         if self.overlay_rect is not None and not self.wrap_side:
             self._pick_rung(pt)   # passing over it after a wrap keeps the rung
         travel = out_dx - self.base_dx
-        steps = int(travel / PX_PER_STEP)
+        steps = int(travel / (PX_PER_STEP * self.dpi_scale))
         if steps != self.steps:
             self.steps = steps
-            delta = (self.offset + steps * RUNGS[self.rung]) / p.scale
+            delta = (self.offset + steps * self.rungs[self.rung]) / p.scale
             for node, orig in zip(self.targets, self.originals):
                 try:
                     if (p.kind == "t" or p.rs_optics is not None or p.rs_focus_by_node) and delta == 0:
@@ -2406,7 +3036,7 @@ class Controller(object):
             c4d.EventAdd()
 
     def _finish(self):
-        net = self.offset + (self.steps or 0) * RUNGS[self.rung]
+        net = self.offset + (self.steps or 0) * self.rungs[self.rung]
         self._dbg("finish net", net)
         self._close_overlay()
         unchanged = False
@@ -2417,6 +3047,14 @@ class Controller(object):
             pass
         if net == 0 or unchanged:
             self._revert()
+        elif self.commit_on_release:
+            # Graph ports were scrubbed without undo; record one step now.
+            for node, orig in zip(self.targets, self.originals):
+                try:
+                    if hasattr(node, "vl_commit"):
+                        node.vl_commit(self.param.descid, orig, self.param.get(node))
+                except Exception as error:
+                    self._dbg("commit undo failed", error)
         self._redraw(force_event=True)
         self._release_capture()
 
@@ -2440,14 +3078,19 @@ class Controller(object):
         self._redraw(force_event=True)
         self._release_capture()
 
+    def _rung_px(self):
+        """Rung size on the pressed field's monitor: RUNG_PX at 96 dpi."""
+        return int(round(RUNG_PX * self.dpi_scale))
+
     def _open_overlay(self):
         """Show a finished bitmap in a popup which never has a native frame."""
         self.overlay = LadderOverlay(self)
         self.overlay_rect = None
         x, y = self.origin
-        w, h = OVERLAY_W, RUNG_PX * (len(RUNGS) + 1)
+        rung_px = self._rung_px()
+        w, h = rung_px, rung_px * (len(self.rungs) + 1)
         left = x - w // 2
-        top = y - RUNG_PX * self.rung - RUNG_PX // 2
+        top = y - rung_px * self.rung - rung_px // 2
         try:
             self.overlay.Open(left, top, w, h)
             if not self.overlay.Show():
@@ -2458,6 +3101,23 @@ class Controller(object):
         except Exception as error:
             self._dbg("overlay failed", error)
             self._close_overlay()
+
+    def _fit_overlay(self):
+        """Shrink an open ladder to its rungs, keeping the top rows in place."""
+        if self.overlay_rect is None:
+            return
+        left, top, w, h = self.overlay_rect
+        height = self._rung_px() * (len(self.rungs) + 1)
+        if height == h:
+            return
+        self.overlay_rect = (left, top, w, height)
+        with self.lock:
+            self.ladder_rect = (left, top, left + w, top + height)
+        try:
+            self.overlay.rect = self.overlay_rect
+            self.overlay.refresh()      # UpdateLayeredWindow takes the new size
+        except Exception as error:
+            self._dbg("overlay resize failed", error)
 
     def _close_overlay(self):
         self.overlay_rect = None
@@ -2486,7 +3146,14 @@ def _prefs():
     world = c4d.GetWorldContainerInstance()
     bc = world.GetContainerInstance(PLUGIN_ID)
     if bc is None:
-        world.SetContainer(PLUGIN_ID, c4d.BaseContainer())
+        # Carry the settings over from the test id once.
+        legacy = world.GetContainer(LEGACY_PREFS_KEY)
+        keys = (PREFS_ENABLE_AT_STARTUP,) + tuple(PREFS_RUNG_BASE + i for i in range(len(ALL_RUNGS)))
+        migrated = c4d.BaseContainer()
+        for key in keys:
+            if legacy.GetType(key) == c4d.DA_LONG:
+                migrated.SetBool(key, legacy.GetBool(key))
+        world.SetContainer(PLUGIN_ID, migrated)
         bc = world.GetContainerInstance(PLUGIN_ID)
     return bc
 
@@ -2495,41 +3162,102 @@ def _enable_at_startup():
     return _prefs().GetBool(PREFS_ENABLE_AT_STARTUP, True)
 
 
+def _rung_pref(pid):
+    """The rung a preference id stands for, or None."""
+    index = pid - PREFS_RUNG_BASE
+    return ALL_RUNGS[index] if 0 <= index < len(ALL_RUNGS) else None
+
+
+def _rung_enabled(rung, bc=None):
+    bc = _prefs() if bc is None else bc
+    return bc.GetBool(PREFS_RUNG_BASE + ALL_RUNGS.index(rung), rung in RUNGS)
+
+
+def _active_rungs():
+    """Main thread. The steps chosen in the preferences, largest first."""
+    try:
+        bc = _prefs()
+        return [r for r in ALL_RUNGS if _rung_enabled(r, bc)] or list(RUNGS)
+    except Exception:
+        return list(RUNGS)
+
+
+def _home_rung(rungs):
+    """The rung a gesture starts on: the one closest to a step of 1."""
+    return min(range(len(rungs)), key=lambda i: abs(math.log10(rungs[i])))
+
+
+def _int_last_rung(rungs):
+    """Integers stop at a step of 1; with only finer steps, keep the largest."""
+    usable = [i for i, r in enumerate(rungs) if r >= 1.0]
+    return usable[-1] if usable else 0
+
+
 class ValueLadderPrefs(c4d.plugins.PreferenceData):
     """The ValueLadder page in Edit > Preferences."""
 
     def InitValues(self, descId, description=None):
-        if descId[0].id == PREFS_ENABLE_AT_STARTUP:
+        pid = descId[0].id
+        if pid == PREFS_ENABLE_AT_STARTUP:
             self.InitPreferenceValue(PREFS_ENABLE_AT_STARTUP, True, description, descId, _prefs())
+        elif _rung_pref(pid) is not None:
+            self.InitPreferenceValue(pid, _rung_pref(pid) in RUNGS, description, descId, _prefs())
         return True
 
     def GetDDescription(self, node, description, flags):
         if not description.LoadDescription(PREFS_DESCRIPTION):
             return False
         if flags & c4d.DESCFLAGS_DESC_NEEDDEFAULTVALUE:
-            self.InitValues(c4d.DescID(c4d.DescLevel(PREFS_ENABLE_AT_STARTUP, c4d.DTYPE_BOOL, 0)), description)
+            for pid in [PREFS_ENABLE_AT_STARTUP] + [PREFS_RUNG_BASE + i for i in range(len(ALL_RUNGS))]:
+                self.InitValues(c4d.DescID(c4d.DescLevel(pid, c4d.DTYPE_BOOL, 0)), description)
         return True, flags | c4d.DESCFLAGS_DESC_LOADED
 
     def GetDParameter(self, node, id, flags):
-        if id[0].id == PREFS_ENABLE_AT_STARTUP:
+        pid = id[0].id
+        if pid == PREFS_ENABLED_NOW:
+            on = _controller is not None and _controller.enabled
+            return True, on, flags | c4d.DESCFLAGS_GET_PARAM_GET
+        if pid == PREFS_ENABLE_AT_STARTUP:
             return True, _enable_at_startup(), flags | c4d.DESCFLAGS_GET_PARAM_GET
+        if _rung_pref(pid) is not None:
+            return True, _rung_enabled(_rung_pref(pid)), flags | c4d.DESCFLAGS_GET_PARAM_GET
         return False
 
     def SetDParameter(self, node, id, data, flags):
-        if id[0].id == PREFS_ENABLE_AT_STARTUP:
+        pid = id[0].id
+        if pid == PREFS_ENABLED_NOW:
+            # The running session only, like Extensions > ValueLadder; never stored.
+            _set_enabled(bool(data))
+            return True, flags | c4d.DESCFLAGS_SET_PARAM_SET
+        if pid == PREFS_ENABLE_AT_STARTUP:
+            # Only the next start. "Enabled now" and Extensions > ValueLadder
+            # switch the running session; the two settings are independent.
             _prefs().SetBool(PREFS_ENABLE_AT_STARTUP, bool(data))
-            # Apply right away too, so the checkbox never disagrees with the plugin.
-            if _controller is not None:
-                _controller.enabled = bool(data)
+            return True, flags | c4d.DESCFLAGS_SET_PARAM_SET
+        rung = _rung_pref(pid)
+        if rung is not None:
+            # The ladder needs at least one step: the last one stays on.
+            if data or any(_rung_enabled(r) for r in ALL_RUNGS if r != rung):
+                _prefs().SetBool(pid, bool(data))
             return True, flags | c4d.DESCFLAGS_SET_PARAM_SET
         return False
+
+
+def _set_enabled(on):
+    """Switch the running session; the startup preference is left alone."""
+    if _controller is None or _controller.enabled == on:
+        return
+    _controller.enabled = on
+    if on:
+        _controller._receiver_ready()
+    _status("ValueLadder %s" % ("enabled" if on else "disabled"))
+    c4d.EventAdd()      # the menu check mark and the Preferences page follow
 
 
 class ValueLadderToggle(c4d.plugins.CommandData):
     def Execute(self, doc):
         if _controller is not None:
-            _controller.enabled = not _controller.enabled
-            c4d.StatusSetText("ValueLadder %s" % ("enabled" if _controller.enabled else "disabled"))
+            _set_enabled(not _controller.enabled)
         return True
 
     def GetState(self, doc):
@@ -2537,11 +3265,23 @@ class ValueLadderToggle(c4d.plugins.CommandData):
         return c4d.CMD_ENABLED | (c4d.CMD_VALUE if on else 0)
 
 
+class ValueLadderSettings(c4d.plugins.CommandData):
+    """Opens the ValueLadder page of the Preferences (startup, ladder steps)."""
+
+    def Execute(self, doc):
+        c4d.PrefsLib_OpenDialog(PREFS_ID)
+        return True
+
+
 def PluginMessage(id, data):
     if _controller is None:
         return False
-    if id == c4d.C4DPL_PROGRAM_STARTED:
+    if id == c4d.C4DPL_BUILDMENU:
+        _build_menu()
+    elif id == c4d.C4DPL_PROGRAM_STARTED:
         _controller.enabled = _enable_at_startup()
+        if _controller.enabled:
+            _controller._receiver_ready()
     elif id == c4d.C4DPL_ENDACTIVITY:
         _controller.stop()
     return False
@@ -2551,13 +3291,65 @@ def _wake():
     c4d.SpecialEventAdd(PLUGIN_ID)
 
 
+EXTENSIONS_MENU = "IDS_EDITOR_PIPELINE"   # Extensions in the main menu
+
+
+def _build_menu():
+    """Add Extensions > ValueLadder with the plugin icon.
+
+    Cinema 4D's own per-folder plugin submenus can't show an icon, so the
+    commands hide from those (PLUGINFLAG_HIDEPLUGINMENU) and are listed here.
+    Without an Extensions menu they get a top-level menu instead.
+    """
+    sub = c4d.BaseContainer()
+    sub.InsData(c4d.MENURESOURCE_SUBTITLE, "ValueLadder")
+    sub.InsData(c4d.MENURESOURCE_SUBTITLE_ICONID, COMMAND_ID)
+    for cid in (COMMAND_ID, SETTINGS_COMMAND_ID):
+        sub.InsData(c4d.MENURESOURCE_COMMAND, "PLUGIN_CMD_%d" % cid)
+    main = c4d.gui.GetMenuResource("M_EDITOR")
+    index = 0
+    while main.GetIndexId(index) != c4d.NOTOK:
+        data = main.GetIndexData(index)
+        if (isinstance(data, c4d.BaseContainer)
+                and data.GetString(c4d.MENURESOURCE_SUBTITLE) == EXTENSIONS_MENU):
+            # Menu entries share ids, so replace the Extensions menu by position:
+            # insert the extended copy right after it, then drop the original.
+            anchor = c4d.gui.SearchPluginMenuResource(EXTENSIONS_MENU)
+            if anchor:
+                data.InsData(c4d.MENURESOURCE_SUBMENU, sub)
+                main.InsDataAfter(c4d.MENURESOURCE_SUBMENU, data, anchor)
+                main.RemoveIndex(index)
+                return
+            break
+        index += 1
+    main.InsData(c4d.MENURESOURCE_SUBMENU, sub)
+
+
+def _load_icon():
+    """res/icon.png (64 px, source: docs/icon/valueladder.svg), or None."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "res", "icon.png")
+    bmp = c4d.bitmaps.BaseBitmap()
+    try:
+        if bmp.InitWith(path)[0] == c4d.IMAGERESULT_OK:
+            return bmp
+    except Exception:
+        pass
+    return None
+
+
 if __name__ == "__main__":
     if IS_WINDOWS:
         _controller = Controller(_wake)
         c4d.plugins.RegisterMessagePlugin(PLUGIN_ID, "ValueLadder", 0, ValueLadderMessage())
-        c4d.plugins.RegisterCommandPlugin(COMMAND_ID, "ValueLadder", 0, None,
+        # Both commands are listed under Extensions > ValueLadder, see _build_menu.
+        icon = _load_icon()
+        flags = c4d.PLUGINFLAG_HIDEPLUGINMENU
+        c4d.plugins.RegisterCommandPlugin(COMMAND_ID, "ValueLadder", flags, icon,
                                           "Toggle middle-mouse ladder scrubbing",
                                           ValueLadderToggle())
+        c4d.plugins.RegisterCommandPlugin(SETTINGS_COMMAND_ID, "ValueLadder Settings...", flags, icon,
+                                          "Startup and ladder step settings",
+                                          ValueLadderSettings())
         c4d.plugins.RegisterPreferencePlugin(PREFS_ID, ValueLadderPrefs, "ValueLadder",
                                              PREFS_DESCRIPTION, 0, 0)
         _controller.start()
