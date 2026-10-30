@@ -1,193 +1,112 @@
-# ValueLadder
+<p align="center">
+  <img src="docs/icon/valueladder_512.png" width="96" alt="ValueLadder icon">
+</p>
 
-A free, open-source plugin for **Cinema 4D 2027** that brings Houdini-style "ladder" value scrubbing to numeric fields: hold the middle mouse button over a value, pick a step size (0.001 … 1000) on the ladder, and move left or right to change the value.
+<h1 align="center">ValueLadder</h1>
 
-一个免费开源的 **Cinema 4D 2027** 插件，把 Houdini 的中键"阶梯"调值方式带到 C4D 的数值框：在数值上按住鼠标中键，在阶梯上选步长（0.001 … 1000），左右移动改变数值。
+<p align="center">
+  Houdini-style ladder value scrubbing for Cinema 4D<br>
+  把 Houdini 的中键阶梯调值带到 Cinema 4D
+</p>
 
-> Status / 状态: beta (Windows only / 仅支持 Windows)
+<p align="center">
+  <img src="docs/media/demo.gif" alt="ValueLadder demo: scrubbing position, rotation, size and segments of a cube">
+  <br>
+  <a href="docs/media/demo.mp4">Full demo video / 完整演示视频 (MP4)</a>
+</p>
 
-> **0.8.12 automatic-focus build / 自动选中版**: hold MMB directly over a numeric field. The plugin clicks it automatically, commits pending text, then probes and restores its value. Legacy simulated mouse-drag discovery remains disabled.
->
-> **直接在数值框上按住中键**：插件自动左键选中数值框，确认已有输入，再探测并恢复原值。无需预先手动左键点击；旧的模拟拖动探测继续关闭。
+Hold the middle mouse button over any numeric field in the Attribute Manager, pick a step size on the ladder, and move left or right to change the value. Release to commit, right-click to cancel.
+
+在属性管理器的任意数值框上按住鼠标中键，在弹出的阶梯上选择步长，左右移动即可改值。松开确认，右键取消。
+
+- **Cinema 4D 2027**, Windows only / 仅支持 Windows
+- Free and open source, [MIT](LICENSE) / 免费开源
 
 ## Install / 安装
 
-1. Copy `plugin/ValueLadder` into your Cinema 4D plugins folder, e.g.
-   `%APPDATA%\Maxon\Maxon Cinema 4D 2027_XXXXXXXX\plugins\ValueLadder`
-2. Restart Cinema 4D.
+1. Download `ValueLadder-1.0.0.zip` from [Releases](https://github.com/Aitidi/c4d-value-ladder/releases) and quit Cinema 4D.
+2. Copy the `ValueLadder` folder from the ZIP into your plugins folder, e.g. `%APPDATA%\Maxon\Maxon Cinema 4D 2027_XXXXXXXX\plugins\ValueLadder`. Replace any older copy; do not keep two.
+3. Start Cinema 4D. **Extensions → ValueLadder** shows the plugin.
+4. **After the first install, enable the plugin:** open **Extensions → ValueLadder Settings...** (or **Edit → Preferences → ValueLadder**) and tick both **Enabled now (this session)** and **Enable at startup**.
 
-把 `plugin/ValueLadder` 整个文件夹复制到 C4D 的 plugins 目录（如上），然后重启 C4D。
+1. 从 [Releases](https://github.com/Aitidi/c4d-value-ladder/releases) 下载 `ValueLadder-1.0.0.zip`，先退出 C4D。
+2. 把压缩包中的 `ValueLadder` 文件夹复制到 plugins 目录，例如 `%APPDATA%\Maxon\Maxon Cinema 4D 2027_XXXXXXXX\plugins\ValueLadder`。替换旧版，不要同时保留两份。
+3. 启动 C4D，**扩展 → ValueLadder** 中可以看到插件。
+4. **初次安装后请先启用插件**：打开 **扩展 → ValueLadder Settings...**（或 **编辑 → 偏好设置 → ValueLadder**），勾选 **当前启用（本次会话）** 和 **启动时启用**。
 
 ## Use / 用法
 
 | Action / 操作 | Result / 效果 |
 | --- | --- |
-| Hold **MMB** directly over a numeric field / 在数值框上直接按住**中键** | Automatically focuses the field, tries ±0.001, ±1, then native increments, restores the value / 自动选中数值框，依次尝试 ±0.001、±1、原生步进，识别后恢复原值 |
-| Move over the ladder / 光标停在阶梯上 | Picks the step size / 选择步长 |
-| Move left or right beside the ladder / 在阶梯旁左右移动 | Changes the value by that step, 6 px per step / 按该步长改值，每 6 像素一步 |
-| Reach the screen edge / 拖到屏幕边缘 | The pointer wraps to the other edge and keeps going / 光标从另一侧绕回，继续累加 |
-| Release **MMB** / 松开**中键** | Commits. The whole drag is one undo step. / 确认，整个拖动只占一步撤销 |
+| Hold **MMB** over a numeric field / 在数值框上按住**中键** | The ladder opens next to the cursor / 光标旁弹出阶梯 |
+| Move up or down the ladder / 在阶梯上移动 | Picks the step: 1000 … 0.001 / 选择步长：1000 … 0.001 |
+| Move left or right / 左右移动 | Changes the value by one step every 6 px / 每 6 像素改变一个步长 |
+| Reach the screen edge / 移到屏幕边缘 | The pointer wraps around and keeps counting / 光标从另一侧绕回，继续累加 |
+| Release **MMB** / 松开**中键** | Commits; the whole drag is one undo step / 确认，整个拖动只占一步撤销 |
 | **Right-click** while holding / 按住时**右键** | Cancels and restores the value / 取消并恢复原值 |
 
-Hold MMB directly over the numeric text. The plugin automatically clicks the field and commits pending edits before recording its baseline. It then appends +0.001 and commits; if no readable value changes, it tries -0.001, +1, -1, then native Up and Down increments. The 0.001 uses the field's displayed numeric units (scale 1 becomes 1.001; angle 40° becomes 40.001°). A successful probe is restored exactly before ladder adjustment. Releasing MMB or changing focus during preparation cancels probing. Legacy simulated mouse-drag discovery remains disabled.
+- Integer parameters hide the fractional steps; time fields move in whole frames.
+- Minimum and maximum limits of the parameter are respected.
+- The ladder, its font and the pixels per step follow the monitor's DPI scaling.
 
-直接在数值文字上按住中键，无需提前左键点击。插件会自动点击数值框、确认已有输入，再记录原值。随后先在数值文字末尾追加 +0.001 并确认，未检测到数值变化时依次尝试 -0.001、+1、-1、原生 ↑、原生 ↓。0.001 按显示数值单位解释，例如缩放 1 → 1.001、角度 40° → 40.001°。识别成功后准确恢复原值，再通过参数接口调整。准备期间松开中键或切换焦点会退出探测；旧的模拟拖动探测继续关闭。
+- 整数参数自动隐藏小数挡位；时间参数按整帧调整。
+- 遵守参数自身的最小值、最大值。
+- 阶梯尺寸、字体和每步像素随显示器 DPI 缩放。
 
-The probe still needs a readable numeric parameter among the supported candidates; it does not make every C4D widget editable. Multiple distinct parameter changes cause cancellation, except for verified project-boundary/preview-range clamps. The small-step probe uses C4D numeric expressions and does not use the clipboard. Focus loss, input errors and ambiguous changes stop the gesture; fallback is only for attempts that yield no readable numeric change. Cancellation restores the numeric values. If C4D does not expose enough information to prove that the newest undo entry belongs to this gesture, an empty native undo entry can remain after cancellation; the plugin does not blindly undo the preceding action.
+## Where it works / 支持范围
 
-这种方式仍需从支持的候选项中读到对应数值，并不能让所有自定义控件都变成可调参数。除已验证的工程起止时间与预览范围联动外，多个不同参数同时变化时会恢复已知变化并退出。小步探测使用 C4D 数值表达式，不使用剪贴板；焦点变化、输入错误或多个不同参数同时变化时退出，仅在未检测到数值变化时继续回退。取消会恢复原值；若 C4D 未提供足够信息确认栈顶撤销属于本次手势，取消后可能保留一步空的原生撤销记录，以免误撤销上一次操作。
+**Works on / 支持：** objects, tags (including tags shown inside an object, e.g. Phong Angle), materials and shaders, user data, project settings, render settings and effects, the active tool, viewport settings, takes, layers, XPresso nodes, field layers, selected keyframes, node-material ports (Redshift and others), Scene Nodes input ports (including vector rows such as `Point [x] [y] [z]`) and the Preferences window. Redshift Camera is covered in detail: [Redshift Camera coverage](docs/redshift-camera-coverage.md).
 
-Integer parameters stop at a step of 1. Time fields move in whole frames.
-整数参数最小步长为 1，时间参数按整帧调整。
+对象、标签（含对象属性中内嵌的标签页，如 Phong 角度）、材质与着色器、用户数据、工程设置、渲染设置与效果、当前工具、视图设置、Take、图层、XPresso 节点、域图层、选中的关键帧、节点材质端口（Redshift 等）、场景节点输入端口（含 `Point [x] [y] [z]` 这类向量行）以及偏好设置窗口。Redshift 相机的详细覆盖见 [Redshift Camera coverage](docs/redshift-camera-coverage.md)。
 
-### Where it works / 支持范围
+**Not supported / 不支持：** colour fields, gradients, splines, check boxes and drop-downs; node ports with an incoming connection; the Structure Manager, Picture Viewer and Render Queue. A field without a parameter label next to it shows a status-bar message instead of the ladder.
 
-Attribute Manager fields of selected objects, tags, materials and their shaders, user data, project settings (including Project Scale and the Scene tabs such as Bullet and Simulation), render settings and effects, the active tool, viewport settings, takes, layers, XPresso nodes, field list layers, selected keyframes, node-material ports (Redshift and others), Scene Nodes numeric input ports and the Preferences window.
+颜色、渐变、样条、复选框和下拉菜单；已有输入连线的节点端口；结构管理器、图片查看器和渲染队列。旁边没有参数名称标签的数值框不弹出阶梯，只在状态栏提示。
 
-属性管理器中：选中的对象、标签、材质及其着色器、用户数据、工程设置（含工程缩放和 Bullet、模拟等页签）、渲染设置与渲染效果、当前工具、视图设置、Take、图层、XPresso 节点、域列表图层、选中的关键帧、节点材质端口（Redshift 等）、Scene Nodes 场景节点的数值输入端口，以及偏好设置窗口。
+**Undo / 撤销：** object, tag and material changes and node ports are one undo step each. Project settings such as FPS are not covered by Cinema 4D's undo: right-click still restores them during the drag, but a committed change cannot be undone with Ctrl+Z.
 
-Not yet / 暂不支持: colour fields stored only in descriptions, gradient and spline widgets, the Structure Manager, Picture Viewer and Render Queue settings. For graph ports only directly exposed bounds are read; resource-only limits and display units are not yet read.
+对象、标签、材质参数和节点端口每次拖动为一步撤销。帧率等工程设置不在 C4D 的撤销范围内：拖动中右键仍可恢复，但确认后无法用 Ctrl+Z 撤销。
 
-Node materials (including Redshift OpenPBR and Ramp) use the same numeric adapter as Scene Nodes: floating-point numbers, integers and vector XYZ components, excluding connected inputs and read-only graphs. Selected graph nodes are discovered even when their material is not selected in the Material Manager. Other materials are searched within a 64-material / 20 ms budget; nested selections use the 512-node budget. Node-material container revision counters are excluded from snapshots, preventing false “multiple parameters changed” cancellations. Colour, ramp/gradient and spline widgets remain unsupported.
+## Settings / 设置
 
-节点材质（含 Redshift OpenPBR、Ramp）与场景节点共用数值适配器：支持浮点数、整数和向量 XYZ 分量，跳过已有输入连线及只读图。即使材质管理器没有选中材质，也会查找图内选中的节点；补充查找最多 64 个材质，耗时预算 20 毫秒，组内选择查找上限为 512 个节点。排除材质容器内部的图版本计数，避免误报“多个参数变化”。颜色、渐变色带和样条控件仍不支持。
+Open **Extensions → ValueLadder Settings...** or **Edit → Preferences → ValueLadder**.
 
-### Redshift Camera / Redshift 相机
-
-`0.8.11` reads current numeric values through camera descriptions, excluding stale container aliases. Focal length, field of view and sensor-size changes are distinguished using the known probe expression in display units, including C4D's rounded text formatting. A replay on an inactive camera copy validates all linked changes before accepting the target. Unknown or independent simultaneous changes still cancel. Optical restoration retains the sensor preset and hidden sensor dimensions, with separate baselines for multi-selected cameras.
-
-Redshift Camera XY gadgets are written as complete vectors while preserving the other component and unused Z padding. Field-of-view scrubbing drives the focal length through the current optical ratio. Camera integration checks cover all 14 exposed projection modes, five sensor-fit modes with ratio lock on/off, still/movie shutters, linked focus, background images, post effects and coordinates/frozen transforms. The matrix covers 85 numeric components over 34 configurations; it tests identification, restoration, drag, undo/redo and cancellation on disposable copies. This is SDK coverage, not an automated UI drag of every field.
-
-`0.8.11` 按相机描述读取实时数值，排除容器中的旧值及内部别名；结合本次探测的显示单位步长（含 C4D 文本舍入）区分焦距、视角和传感器尺寸，并在未激活的相机副本上重放，核对完整联动后再确认目标。无法区分或存在其他独立变化时仍退出。恢复会保留传感器预设及隐藏尺寸，多选相机分别保存原值。二维控件整向量写入，保留另一分量及未使用的 Z；视角通过当前光学比例换算焦距来调整。
-
-专项矩阵覆盖 14 种投影、5 种传感器适配模式及锁定比例开关、静态/电影快门、关联对焦、背景图片、镜头效果，以及坐标和冻结变换：共 34 组配置、85 个数值分量，检查识别、恢复、拖动、撤销/重做和取消。全部使用临时相机副本；这是 SDK 验证，不代表逐个数值框完成了真实界面拖动。灰色字段需先在 C4D 中启用对应功能；复选框、下拉菜单、颜色块、LUT 列表、曲线和文件选择器不作为阶梯调值目标。
-
-`tools/test_redshift_camera.py`: call `run_checks(existing_rs_camera)` inside C4D; it does not switch or edit the active scene.
-
-Full SDK verification matrix / 完整 SDK 检查清单：[Redshift Camera coverage](docs/redshift-camera-coverage.md)。
-
-### Scene Nodes usage / 场景节点用法
-
-Select the node in the Scene Nodes editor, then hold MMB over a numeric input in the Attribute Manager or the Node Editor's parameter panel. This covers the document's existing Scene Nodes graph and graphs on selected capsules. Selections inside groups are searched within a 512-node budget; at most 30 selected nodes (or root-level nodes when nothing is selected) per graph are scanned. Graph discovery never creates missing graphs. Unset numeric inputs such as Arithmetic's initial zeros are included without initializing the graph.
-
-Supported constants are floating-point numbers, integers and individual XYZ components of 3D vectors. Incoming connections (including vector component connections) and read-only graphs are left untouched. Enums, booleans, colours, matrices as whole values, arrays, geometry and output/data-inspector values are not scrub targets. Nested input bundles are scanned, with a 512-port budget per node. Only bounds exposed directly on the graph port are applied; resource-only bounds and display units are not yet read, so ladder steps use the stored numeric units for these graph ports.
-
-在场景节点编辑器中选中节点，再在**属性管理器或节点编辑器参数面板的数值输入框**上按住中键。支持文档已有的场景节点图，以及选中胶囊对象的节点图；组内选中项的查找上限为 512 个节点，每个图最多扫描 30 个选中节点，未选中时扫描根层节点。检测不会自动创建节点图。Arithmetic 等尚未存值、界面显示初始零值的数值输入也可识别，检测时不会写入默认值。
-
-支持浮点数、整数和三维向量的单个 XYZ 分量。跳过有输入连线的端口（含分量连线）及只读图，不改动连线。枚举、布尔、颜色、整个矩阵、数组、几何体和输出/数据检查器的值暂不作为调值目标。嵌套输入端口每个节点最多检查 512 个。当前只读取端口直接公开的上下限，尚未读取资源中的范围及显示单位；这些图端口的阶梯步长按内部数值单位计算。
-
-### Settings / 设置
-
-**Edit → Preferences → ValueLadder → Enable at startup** decides whether the ladder is on when Cinema 4D starts; changing it does not switch the running session. **Enabled now (this session)** on the same page, or **Extensions → ValueLadder**, turns it on or off for the current session only, without changing the startup setting. **Extensions → ValueLadder Settings...** opens the preferences page.
-
-**Ladder steps** on the same page chooses which steps the ladder shows: 10000, 1000, 100, 10, 1, 0.1, 0.01, 0.001 and 0.0001 (1000 … 0.001 by default). Changes apply to the next gesture. A gesture starts on the enabled step closest to 1. Integer parameters use the steps of 1 and above; with only finer steps enabled, they use the largest one. At least one step always stays enabled.
-
-**编辑 → 偏好设置 → ValueLadder → 启动时启用** 只决定下次启动 C4D 时是否开启，修改它不会改变当前状态；同一页的 **当前启用（本次会话）** 或 **扩展 → ValueLadder** 只在当前会话中开关，不会改变启动设置；**扩展 → ValueLadder Settings...** 打开偏好设置页。
-
-同一页面的 **阶梯挡位** 用于选择阶梯显示哪些步长：10000、1000、100、10、1、0.1、0.01、0.001、0.0001（默认 1000 … 0.001）。修改后从下一次手势起生效。每次手势从已启用挡位中最接近 1 的那一档开始；整数参数只使用 1 及以上的挡位，若只启用了更小的挡位，则使用其中最大的一档。至少保留一个挡位，最后一个无法关闭。
+| Setting / 设置 | Meaning / 说明 |
+| --- | --- |
+| Enabled now (this session) / 当前启用（本次会话） | Turns the ladder on or off until Cinema 4D quits. **Extensions → ValueLadder** does the same. / 仅在本次运行中开关，**扩展 → ValueLadder** 效果相同 |
+| Enable at startup / 启动时启用 | Whether the ladder is on when Cinema 4D starts / 启动 C4D 时是否开启 |
+| Ladder steps / 阶梯挡位 | Which of 10000 … 0.0001 the ladder shows (default 1000 … 0.001). A gesture starts on the step closest to 1. / 阶梯显示哪些步长（默认 1000 … 0.001），每次从最接近 1 的挡位开始 |
 
 ## How it works / 原理
 
-`0.9.0` reads the parameter from the Attribute Manager itself. C4D draws every manager gadget into one window; there is no child HWND, UI Automation or MSAA element per field. A parameter **label**, however, is a drag source carrying `DRAGTYPE_DESCID`: the exact `DescID` (down to the vector component) and the edited objects. On MMB the plugin finds the plain label text left of the field, drags it a few pixels into a parked receiver dialog (alpha 1, no taskbar entry, never activated) and refuses the drop. The whole round trip takes ~130 ms and edits nothing; the gesture then adds its own undo step. Labels that name document settings, fields without a plain text label (the second field of a two-value gadget, drop-down neighbours) and drags the receiver does not see fall back to the probe below. For document settings the probe supplies the native undo and only accepts the parameter the label named.
+Cinema 4D draws all Attribute Manager fields into a single window and offers no API that maps the mouse position to a parameter. Every parameter label, however, is a drag source that carries the parameter's exact `DescID` and the edited objects. On MMB, ValueLadder finds the field by its theme colour, locates its label, drags that label a few pixels into an invisible receiver window and refuses the drop. This takes about 130 ms and changes nothing. From then on the value is read and written through the regular parameter APIs, for node ports through the graph API.
 
-`0.9.0` 直接从属性管理器读取参数。C4D 把所有管理器控件绘制在同一个窗口里，没有逐个数值框的子窗口、UI Automation 或 MSAA 元素；但参数**名称标签**本身是拖放源，携带 `DRAGTYPE_DESCID`：精确的 `DescID`（含向量分量）和正在编辑的对象。按下中键后，插件找到数值框左侧的纯文字标签，把它拖动几个像素到一个停放在屏幕外的接收窗口（透明度 1、无任务栏、不激活），并拒绝放下。整个过程约 130 毫秒，不修改任何数值，之后由手势自行建立撤销记录。工程设置类标签、没有纯文字标签的数值框（双值控件的第二个框、紧邻下拉框）以及接收窗口未收到拖动时，回退到下方的探测方式；工程设置仍由探测建立原生撤销，并只接受标签指明的参数。
-
-`0.9.2` skips the port circles of node parameters (Redshift and other node materials, Scene Nodes) and keyframe diamonds when looking for the label: small square icons with empty corners are never pressed. Node-parameter labels carry the port id packed into the `DescID` (e.g. `com.redshift3d.redshift4c4d.nodes.core.openpbrmaterial.base_weight`); the native probe then records the graph undo and only accepts that port.
-
-`0.9.2` 查找标签时跳过节点参数（Redshift 等节点材质、场景节点）的端口小圆圈和关键帧菱形：四角为空的小方形图标不会被点击。节点参数标签的 `DescID` 中打包了端口 ID（如 `com.redshift3d.redshift4c4d.nodes.core.openpbrmaterial.base_weight`），随后由输入探测建立节点图撤销，并只接受该端口。
-
-`0.9.4` identifies document settings and node ports by their label too, with no typing probe. Document settings (FPS, Project Scale, ...) are scrubbed directly; Cinema 4D's undo does not cover them, so Esc / right click restores the value but a committed change cannot be undone with Ctrl+Z. Node ports are scrubbed without undo and committed on release as one graph transaction, i.e. one undo step. The probe below remains as a fallback for fields without a usable label; `ENABLE_PROBE_FALLBACK = False` turns it off, and such fields then just show a status message.
-
-`0.9.4` 工程设置和节点端口也改为通过标签识别，不再输入探测。工程设置（帧率、工程缩放等）直接调整；C4D 的撤销不覆盖它们，Esc / 右键取消会恢复原值，但提交后无法用 Ctrl+Z 撤销。节点端口在拖动过程中不记录撤销，松开时作为一次节点图事务提交，即一步撤销。下方的探测仅作为没有可用标签时的回退；设置 `ENABLE_PROBE_FALLBACK = False` 可关闭回退，此时这类数值框只在状态栏提示。
-
-`0.9.5` handles rows where one label serves several fields, e.g. Scene Nodes' `Point [x] [y] [z]`: the label search walks past sibling fields and the number of fields passed names the vector component. Short Scene Nodes port ids such as `pointin` are decoded too. The node editor's canvas has the field colour cut into a 1-pixel grid; such cells are no longer taken for fields, so MMB panning there is left alone.
-
-`0.9.5` 支持一个标签对应多个数值框的行，例如场景节点的 `Point [x] [y] [z]`：查找标签时跨过同行的其它数值框，跨过的数量即向量分量。同时可解析 `pointin` 这类简短的场景节点端口 ID。节点编辑器画布与数值框同色并被 1 像素网格线分隔，现在不会再被当作数值框，中键平移画布不受影响。
-
-`0.9.6` hides the fractional rungs (below 1) for integer parameters; the ladder shrinks to the remaining steps once the parameter is known.
-
-`0.9.6` 整数参数隐藏小于 1 的小数挡位；识别出参数后阶梯会收缩为剩余挡位。
-
-`0.9.7` turns the probe fallback off by default (`ENABLE_PROBE_FALLBACK = False`): every parameter is identified by its label alone, and a field without a usable label only shows a status message. Set it to `True` to restore the probe below for such fields.
-
-`0.9.7` 默认关闭探测回退（`ENABLE_PROBE_FALLBACK = False`）：所有参数只通过标签识别，没有可用标签的数值框只在状态栏提示。改为 `True` 可让这类数值框重新使用下方的探测。
-
-`0.9.9` registers with plugin IDs issued by Maxon (1072634 message plugin, 1072637 toggle command, 1072639 preferences, 1072640 settings command) instead of the test range. Settings saved by earlier versions under the test ID are copied over on first start.
-
-`0.9.9` 改用 Maxon 正式分配的插件 ID（1072634 消息插件、1072637 开关命令、1072639 偏好设置、1072640 设置命令），不再使用测试 ID。旧版本以测试 ID 保存的设置会在首次启动时自动迁移。
-
-`0.9.10` adds a plugin icon for both commands, drawn after the [Boghma Icon Template for Cinema 4D Plugin](https://www.figma.com/community/file/1653314126929745043/boghma-icon-template-for-cinema-4d-plugin) by DunHouGo (CC BY 4.0). The source is `docs/icon/valueladder.svg`; `plugin/ValueLadder/res/icon.png` is its 64 px export with border space, and `docs/icon` also holds the 512 px (web) and 32 px (UI) exports.
-
-`0.9.10` 为两个命令加入插件图标，参照 DunHouGo 的 [Boghma Icon Template for Cinema 4D Plugin](https://www.figma.com/community/file/1653314126929745043/boghma-icon-template-for-cinema-4d-plugin)（CC BY 4.0）绘制。源文件为 `docs/icon/valueladder.svg`；`plugin/ValueLadder/res/icon.png` 是带边距的 64 px 导出，`docs/icon` 中另有 512 px（网页）和 32 px（界面）导出。
-
-`0.9.11` builds **Extensions → ValueLadder** itself so the submenu shows the icon (Cinema 4D's automatic per-folder plugin submenus cannot); the commands are hidden from the automatic one. Field detection and the ladder (rung size, font, pixels per step) now scale with the monitor's DPI. Status messages and Redshift/graph-undo calls fall back gracefully on older builds. `tools/check_api_compat.py` checks that a build has every `c4d`/`maxon` name the plugin uses; run it with that build's `c4dpy`. Only Cinema 4D 2027 has been tested live.
-
-`0.9.11` 由插件自己创建 **扩展 → ValueLadder** 子菜单，使其显示图标（C4D 按插件文件夹自动生成的子菜单无法显示图标），命令不再出现在自动生成的子菜单中。数值框识别与阶梯（挡位尺寸、字体、每步像素）现在随显示器 DPI 缩放。状态栏提示、Redshift 相机与节点图撤销在旧版本上会自动降级。`tools/check_api_compat.py` 可检查某个 C4D 版本是否具备插件用到的全部 `c4d`/`maxon` 接口，用该版本的 `c4dpy` 运行。目前只在 C4D 2027 上实测过。
-
-Cinema 4D does not expose a general Python API that maps the global mouse position to a parameter. ValueLadder recognises fields by their theme colour. MMB triggers an automatic click in the target field and a Return to commit pending text before snapshots are taken. It then re-enters the numeric editor, tries +0.001, -0.001, +1, -1, native Up, then native Down until a numeric change is identified. It restores the baseline immediately and uses parameter APIs for the rest of the gesture. Native input supplies the undo record; subsequent API writes reuse it.
-
-C4D 没有公开一个通用的 Python 接口，把全局鼠标位置直接转换为参数 ID。插件先按主题颜色识别数值框；按住中键后自动点击目标数值框，按回车确认已有输入，再记录快照。随后重新进入编辑，依次尝试 +0.001、-0.001、+1、-1、原生 ↑、原生 ↓，识别变化后立即恢复原值，之后通过参数接口调整。原生输入建立撤销记录，后续参数写入复用它。
+C4D 把属性管理器的所有控件画在同一个窗口里，也没有把鼠标位置换算成参数的接口。但每个参数的名称标签都是拖放源，携带参数精确的 `DescID` 和正在编辑的对象。按下中键后，插件按主题颜色找到数值框，再找到它的标签，把标签拖动几个像素到一个不可见的接收窗口并拒绝放下。整个过程约 130 毫秒，不修改任何数据。之后通过常规参数接口读写数值，节点端口则通过节点图接口。
 
 ## Development / 开发
 
-`tools/dev_reload.py` hot-reloads the plugin into a running Cinema 4D without a restart. It imports the new code before stopping the old instance, suspends running installed controllers, and starts one test controller driven by the floating **ValueLadder dev** panel. Keep the panel open while testing; **Reload code** loads subsequent edits and **End test** (or closing the panel) stops the test controller and resumes the suspended installed instances. Reloading requires an idle gesture. Registered commands and preferences are still supplied by the installed plugin; changing those definitions requires a restart. Set the environment variable `VALUELADDER_DEBUG=1` to log to `%TEMP%\valueladder_debug.log`.
+| File / 文件 | Purpose / 用途 |
+| --- | --- |
+| `plugin/ValueLadder/ValueLadder.pyp` | The plugin / 插件本体 |
+| `tools/dev_reload.py` | Hot-reloads the plugin into a running Cinema 4D; a floating **ValueLadder dev** panel controls the test instance / 在运行中的 C4D 内热加载，由 **ValueLadder dev** 面板控制测试实例 |
+| `tools/build_release.py` | Builds and verifies the release ZIP / 生成并校验发布包 |
+| `tools/check_api_compat.py` | Run with a build's `c4dpy` to check that it has every `c4d` / `maxon` name the plugin uses / 用某版本的 `c4dpy` 运行，检查插件用到的接口是否都存在 |
+| `tools/test_*.py` | SDK checks run inside Cinema 4D on disposable documents and copies / 在 C4D 内用临时文档和副本运行的检查 |
 
-在 C4D 内运行 `tools/dev_reload.py` 可实时加载代码，无需重启。脚本先导入新代码，再暂停正式版的鼠标与键盘钩子，仅启用一个由 **ValueLadder dev** 面板驱动的测试实例。保持面板打开测试；点击“重新加载代码”可加载后续改动，“结束测试”或关闭面板会停止测试实例并恢复正式版。重载前须松开中键结束手势。正式注册的命令和偏好页定义仍需重启才能更新。
+Set the environment variable `VALUELADDER_DEBUG=1` to log to `%TEMP%\valueladder_debug.log`.
 
-The plugin IDs in `ValueLadder.pyp` are Maxon's test IDs and will be replaced with registered IDs before a 1.0 release.
+设置环境变量 `VALUELADDER_DEBUG=1` 可把日志写入 `%TEMP%\valueladder_debug.log`。
 
-Run `tools/test_scene_nodes.py` in C4D's Script Manager for SDK integration checks. It uses a disposable document without switching the active document. The installed plugin does not have to be disabled: the checks import the module without starting another mouse hook.
+Plugin IDs 1072634, 1072637, 1072639 and 1072640 are registered with Maxon.
 
-`tools/test_focus_probe.py` checks focused probing, exact restoration, integer/bound handling, ambiguous changes, cancellation and undo safety using disposable documents.
+插件 ID 1072634、1072637、1072639、1072640 均由 Maxon 正式分配。
 
-`tools/test_material_nodes.py`: call `run_checks(existing_node_material)` inside C4D to verify discovery, numeric round trips, revision-counter filtering, restoration and undo/redo on disposable material copies. The source material is not modified.
+## Credits / 致谢
 
-`tools/test_overlay.py` checks hidden/borderless creation, client size, foreground focus, mouse pass-through and resource cleanup. It includes 50 open/refresh/close cycles, 300 consecutive frame updates with source-pixel checks, drawing/presentation failure handling, unchanged-frame caching and exclusion of the old control-paint path. No input is injected and no scene is edited.
+The icon is drawn after the [Boghma Icon Template for Cinema 4D Plugin](https://www.figma.com/community/file/1653314126929745043/boghma-icon-template-for-cinema-4d-plugin) by DunHouGo (CC BY 4.0). Source: `docs/icon/valueladder.svg`.
 
-`0.8.0` adds the focused native-keyboard probe and retains the original direct-MMB entry. `0.7.0` adds Scene Nodes support, narrows floating Node Editor candidate scans to node ports, and caps viewport redraws at 30 FPS while dragging (with a forced final refresh).
-
-`0.8.2` excludes parameters marked `DESC_HIDE` from numeric snapshots, including derived global/absolute transforms. Editing one visible PSR component therefore no longer produces several false targets. SDK regression checks cover all nine visible PSR components and a child under a rotated/scaled parent. The focused-only restriction introduced in `0.8.1` remains in effect.
-
-`0.8.2` 从快照中排除标为隐藏的参数，包括自动联动的全局、变换后坐标，修复位置/旋转/缩放单个分量被误判成多个参数而退出的问题。SDK 回归覆盖九个 PSR 分量及带旋转、缩放父对象的情况，继续保持旧探测关闭。
-
-`0.8.3` includes tags attached to selected objects even when the tag itself is not selected. This covers object-integrated Attribute Manager tabs such as **Phong → Phong Angle**. At most 200 attached tags are scanned per gesture; explicitly selected tags are deduplicated. SDK regression checks cover discovery, degree conversion and undo/redo.
-
-`0.8.3` 补充扫描选中对象所附的标签，支持从对象属性中的 **Phong → Phong Angle** 等内嵌标签页进入，即使标签本身没有被选中也能识别。每次手势最多扫描 200 个附属标签，并与已选标签去重；SDK 回归覆盖候选发现、角度换算及撤销/重做。
-
-`0.8.4` tries ±0.001 numeric expressions before native keyboard increments. Proven no-op undo entries are removed before retries and graph/object handles are reacquired. Diagnostic traces record the original value, the actual probed value and the displayed delta.
-
-`0.8.4` 优先用 ±0.001 数值表达式探测，无变化时才回退到原生方向键步进。重试前移除能够确认归属的空撤销记录，并重新获取对象/节点图句柄；日志记录原值、实际探测值及显示单位下的差值。
-
-`0.8.5` fixes node-material discovery when the Material Manager has no selected material and filters graph revision counters from classic material snapshots. Material graphs share the bounded, typed numeric adapter with Scene Nodes, including nested selection discovery and graph-specific parameter keys. Verified with disposable copies of a C4D 2027 Redshift OpenPBR/Ramp graph.
-
-`0.8.5` 修复材质未被选中时节点参数漏扫，以及材质内部图版本计数引发的误判；材质图与场景节点共用带扫描上限、保留 SDK 数值类型的适配器，补充组内选择及不同图的参数键隔离。已用 C4D 2027 的 Redshift OpenPBR/Ramp 材质副本验证。
-
-`0.8.6` removes the required prior left click. MMB automatically focuses the numeric field before committing pending text and recording the baseline. Preparation checks cancellation and foreground focus, preserves pointer motion and balances cursor visibility. The old native drag probe remains disabled.
-
-`0.8.6` 去掉预先手动左键点击的要求。直接按住中键会自动选中数值框、确认已有输入，再记录原值并探测；准备阶段检查松键、取消和前台焦点，保留鼠标移动并恢复光标显示，继续禁用旧的原生拖动探测。
-
-`0.8.7` attempted transparent initialization of a C4D async dialog. Post-open opacity/style checks passed, but user testing still exposed frame flashes during initialization. Superseded by the native bitmap popup in `0.8.8`.
-
-`0.8.7` 尝试让 C4D 异步浮窗透明初始化。打开后的透明度、样式检查虽通过，用户实测仍有初始化瞬间闪框，已由 `0.8.8` 的原生位图弹窗取代。
-
-`0.8.8` draws the ladder into a bitmap and displays it in a native `STATIC` popup. It is created without visibility, caption or frame styles; the finished image is installed before showing. There is no C4D async dialog, menu grip, CBT creation hook or Python window procedure. Input probing and parameter adjustment are unchanged. Native integration checks cover the hidden creation state, displayed style/client size, mouse pass-through, focus and resource cleanup; the displayed ladder was also visually inspected.
-
-`0.8.8` 将阶梯绘制为位图，使用原生无边框弹窗显示。创建时就不带标题栏、边框或可见标记，先放入完整图像再显示；不再创建 C4D 异步浮窗，也不使用顶部拖拽条、窗口创建钩子或 Python 窗口过程。参数探测与拖动逻辑沿用原有方案。检查覆盖初始隐藏状态、实际窗口样式与客户区尺寸、鼠标穿透、焦点和资源释放，并核对了实际显示外观。
-
-`0.8.9` replaces `STATIC` bitmap swapping and ordinary repainting with complete off-screen frames submitted through `UpdateLayeredWindow(ULW_OPAQUE)`. The native window shell remains borderless; control background painting and `SetLayeredWindowAttributes` are not used. Unchanged frames are skipped, and a failed draw/presentation leaves the last successful frame intact. This addresses intermittent white flashes while dragging. Native tests check every submitted frame's background/active-rung pixels; a separate timer-driven preview verifies live updates without changing scene parameters.
-
-`0.8.9` 将 `STATIC` 控件换位图、普通重绘的方式改成后台完成整帧后，通过 `UpdateLayeredWindow(ULW_OPAQUE)` 提交显示。窗口继续从创建起就无边框，不再使用控件背景绘制及 `SetLayeredWindowAttributes`。内容不变时跳过刷新，绘制或提交失败时保留上一张成功画面，用于解决拖动时偶发全白闪帧。原生检查验证每张提交画面的背景和当前档位像素，并用独立定时预览核对实时刷新，不改动场景参数。
-
-`0.8.10` compares time snapshots as exact SDK times rather than frame counts, so changing FPS no longer creates false time targets. Probing falls back from ±0.001 to ±1 expressions before trying arrow keys. Project Time, Time Min/Max and Preview Min/Max are covered by SDK checks. Known preview-range clamps from changing project boundaries are attributed to the boundary parameter; restoring or cancelling restores the exact original ranges, including subframes. Unrelated simultaneous changes remain ambiguous. Label/OCR discovery is not implemented.
-
-`0.8.10` 改用 SDK 精确时间做快照，避免 FPS 改变引发帧数换算误判；±0.001 无变化时先尝试 ±1 表达式，再回退方向键。SDK 检查覆盖 Project Time、Time Min/Max、Preview Min/Max。工程起止时间引起的已验证预览范围联动归于起止参数，恢复及取消会还原完整范围，保留原始子帧；其他多参数变化仍退出。尚未实现名称/OCR 定位。
-
-`tools/test_project_time.py` checks FPS/time discovery, linked preview ranges, exact restoration, subframes and cancellation using disposable inactive documents.
+图标参照 DunHouGo 的 [Boghma Icon Template for Cinema 4D Plugin](https://www.figma.com/community/file/1653314126929745043/boghma-icon-template-for-cinema-4d-plugin)（CC BY 4.0）绘制，源文件为 `docs/icon/valueladder.svg`。
 
 ## License / 许可
 
 [MIT](LICENSE)
-
-`0.8.12` excludes the derived Focus Distance output from discovery while an object link or automatic focus controls it. Offset remains editable, and restoring it also restores the recorded numeric focus-distance cache. The camera regression test explicitly simulates the native Attribute Manager cache change that inactive SDK-only setters do not reproduce. No Redshift description-update messages are sent.
-
-`0.8.12` 在关联对象或自动对焦控制焦距时，不再把只读的 Focus Distance 输出当成可编辑目标；Offset 仍参与探测，恢复时一并还原记录的距离缓存。回归补充模拟真实属性管理器更新缓存的情况，避免仅用未激活文档的 SetParameter 检查漏掉此路径。插件不发送 Redshift 参数描述更新消息。

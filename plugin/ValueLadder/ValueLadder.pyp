@@ -30,7 +30,7 @@ from collections import deque
 import c4d
 import maxon
 
-__version__ = "0.9.11"
+__version__ = "1.0.0"
 
 # Registered at https://developers.maxon.net/forum/pid (labels in comments).
 PLUGIN_ID = 1072634             # ValueLadderMessage
