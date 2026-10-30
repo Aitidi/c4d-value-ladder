@@ -21,7 +21,7 @@ def main():
             files['ValueLadder/' + path.relative_to(plugin).as_posix()] = path.read_bytes()
     for name in ('README.md', 'LICENSE', 'docs/redshift-camera-coverage.md'):
         files['ValueLadder/' + name] = (repo / name).read_bytes()
-    instructions = f'''ValueLadder {version} / Cinema 4D 2027 / Windows
+    instructions = f'''ValueLadder {version} / Cinema 4D 2026, 2027 / Windows
 
 安装：先保存场景并退出 C4D，将本包完整的 ValueLadder 文件夹复制到 plugins 目录，
 替换旧版后重新启动。不要同时安装两份插件。正式启动无需打开 dev 面板。
