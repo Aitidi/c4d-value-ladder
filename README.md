@@ -22,6 +22,7 @@ Hold the middle mouse button over any numeric field in the Attribute Manager, pi
 
 - Supports **Cinema 4D 2026 and 2027**, Windows only
 - Free and open source, [MIT](LICENSE)
+- Step-by-step guide and troubleshooting: [Help](docs/help.md)
 
 ## Install
 

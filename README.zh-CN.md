@@ -22,6 +22,7 @@
 
 - 支持 **Cinema 4D 2026 和 2027**，仅限 Windows
 - 免费开源，[MIT](LICENSE) 许可
+- 详细使用步骤与常见问题：[帮助文档](docs/help.zh-CN.md)
 
 ## 安装
 
