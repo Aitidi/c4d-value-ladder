@@ -26,7 +26,7 @@
 
 ## 安装
 
-1. 从 [Releases](https://github.com/Aitidi/c4d-value-ladder/releases) 下载 `ValueLadder-1.0.0.zip`，先退出 C4D。
+1. 从 [Releases](https://github.com/Aitidi/c4d-value-ladder/releases) 下载 `ValueLadder-1.0.1.zip`，先退出 C4D。
 2. 把压缩包中的 `ValueLadder` 文件夹复制到 plugins 目录，例如 `%APPDATA%\Maxon\Maxon Cinema 4D 2027_XXXXXXXX\plugins\ValueLadder`（2026 对应 `2026_XXXXXXXX` 文件夹）。替换旧版，不要同时保留两份。
 3. 启动 C4D，**扩展 → ValueLadder** 中可以看到插件。
 4. **初次安装后请先启用插件**：打开 **扩展 → ValueLadder Settings...**（或 **编辑 → 偏好设置 → ValueLadder**），勾选 **当前启用（本次会话）** 和 **启动时启用**。

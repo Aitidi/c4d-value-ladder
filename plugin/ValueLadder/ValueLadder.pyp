@@ -30,7 +30,7 @@ from collections import deque
 import c4d
 import maxon
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 # Registered at https://developers.maxon.net/forum/pid (labels in comments).
 PLUGIN_ID = 1072634             # ValueLadderMessage
@@ -3279,6 +3279,9 @@ def PluginMessage(id, data):
     if id == c4d.C4DPL_BUILDMENU:
         _build_menu()
     elif id == c4d.C4DPL_PROGRAM_STARTED:
+        # Other plugins may build their menus after ours.
+        if _fix_foreign_menus(c4d.gui.GetMenuResource("M_EDITOR")):
+            c4d.gui.UpdateMenus()
         _controller.enabled = _enable_at_startup()
         if _controller.enabled:
             _controller._receiver_ready()
@@ -3302,11 +3305,9 @@ def _build_menu():
     Without an Extensions menu they get a top-level menu instead.
     """
     sub = c4d.BaseContainer()
-    sub.InsData(c4d.MENURESOURCE_SUBTITLE, "ValueLadder")
-    sub.InsData(c4d.MENURESOURCE_SUBTITLE_ICONID, COMMAND_ID)
-    for cid in (COMMAND_ID, SETTINGS_COMMAND_ID):
-        sub.InsData(c4d.MENURESOURCE_COMMAND, "PLUGIN_CMD_%d" % cid)
+    _fill_submenu(sub)
     main = c4d.gui.GetMenuResource("M_EDITOR")
+    _fix_foreign_menus(main)
     index = 0
     while main.GetIndexId(index) != c4d.NOTOK:
         data = main.GetIndexData(index)
@@ -3323,6 +3324,34 @@ def _build_menu():
             break
         index += 1
     main.InsData(c4d.MENURESOURCE_SUBMENU, sub)
+
+
+def _fill_submenu(sub):
+    sub.InsData(c4d.MENURESOURCE_SUBTITLE, "ValueLadder")
+    sub.InsData(c4d.MENURESOURCE_SUBTITLE_ICONID, COMMAND_ID)
+    for cid in (COMMAND_ID, SETTINGS_COMMAND_ID):
+        sub.InsData(c4d.MENURESOURCE_COMMAND, "PLUGIN_CMD_%d" % cid)
+
+
+def _fix_foreign_menus(menu):
+    """Repair ValueLadder submenus built by other plugin managers.
+
+    They list the folder's visible plugins, which are only the message plugin
+    and the preference page, since the commands are hidden; and they set no
+    icon. Give them our icon and commands. Returns the number repaired.
+    """
+    fixed = 0
+    for _, data in menu:    # sub-containers are live references
+        if not isinstance(data, c4d.BaseContainer):
+            continue
+        if (data.GetString(c4d.MENURESOURCE_SUBTITLE) == "ValueLadder"
+                and data.GetInt32(c4d.MENURESOURCE_SUBTITLE_ICONID) != COMMAND_ID):
+            data.FlushAll()
+            _fill_submenu(data)
+            fixed += 1
+        else:
+            fixed += _fix_foreign_menus(data)
+    return fixed
 
 
 def _load_icon():

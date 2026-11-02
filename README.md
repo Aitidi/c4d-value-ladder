@@ -26,7 +26,7 @@ Hold the middle mouse button over any numeric field in the Attribute Manager, pi
 
 ## Install
 
-1. Download `ValueLadder-1.0.0.zip` from [Releases](https://github.com/Aitidi/c4d-value-ladder/releases) and quit Cinema 4D.
+1. Download `ValueLadder-1.0.1.zip` from [Releases](https://github.com/Aitidi/c4d-value-ladder/releases) and quit Cinema 4D.
 2. Copy the `ValueLadder` folder from the ZIP into your plugins folder, e.g. `%APPDATA%\Maxon\Maxon Cinema 4D 2027_XXXXXXXX\plugins\ValueLadder` (or the matching `2026_XXXXXXXX` folder). Replace any older copy; do not keep two.
 3. Start Cinema 4D. **Extensions → ValueLadder** shows the plugin.
 4. **After the first install, enable the plugin:** open **Extensions → ValueLadder Settings...** (or **Edit → Preferences → ValueLadder**) and tick both **Enabled now (this session)** and **Enable at startup**.
